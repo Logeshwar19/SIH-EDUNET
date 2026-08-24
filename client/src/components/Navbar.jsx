@@ -12,7 +12,8 @@ import {
   Sparkles,
   Search,
   Bell,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Home
 } from 'lucide-react';
 
 export default function Navbar({
@@ -58,30 +59,32 @@ export default function Navbar({
         gap: '1rem',
         flexWrap: 'wrap',
       }}>
-        {/* Brand Logo & Tag — Blind & Deaf */}
+        {/* Brand Logo & Tag */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <img
-            src="/logo.png"
-            alt="Blind & Deaf Logo"
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: '12px',
-              objectFit: 'cover',
-              boxShadow: '0 4px 14px rgba(0, 0, 0, 0.6)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-            }}
-          />
+          <div style={{
+            width: 42,
+            height: 42,
+            borderRadius: '14px',
+            background: 'linear-gradient(135deg, #27272a 0%, #18181b 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#ffffff',
+            boxShadow: '0 4px 14px rgba(0, 0, 0, 0.6)',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+          }}>
+            <Sparkles style={{ width: 22, height: 22 }} />
+          </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <span style={{
                 fontFamily: 'var(--font-display)',
-                fontSize: '1.125rem',
+                fontSize: '1.15rem',
                 fontWeight: 800,
                 color: '#ffffff',
                 letterSpacing: '-0.03em',
               }}>
-                Blind & <span style={{ color: '#e4e4e7' }}>Deaf</span>
+                Inclusive<span style={{ color: '#e4e4e7' }}>AI</span>
               </span>
               <span style={{
                 fontSize: '0.625rem',
@@ -102,7 +105,7 @@ export default function Navbar({
           </div>
         </div>
 
-        {/* Center Tab Switcher (Monochrome Grey & Black Pill) */}
+        {/* Center Tab Switcher (Sleek Grey & White Pill) */}
         <nav style={{
           display: 'flex',
           alignItems: 'center',
@@ -184,9 +187,9 @@ export default function Navbar({
             style={{
               padding: '0.4rem 0.75rem',
               borderRadius: '9999px',
-              border: '1px solid ' + (isAudioMuted ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.25)'),
-              background: isAudioMuted ? '#18181b' : '#27272a',
-              color: isAudioMuted ? '#71717a' : '#ffffff',
+              border: '1px solid ' + (isAudioMuted ? '#E2E8F0' : '#C7D2FE'),
+              background: isAudioMuted ? '#F8FAFC' : '#EEF2FF',
+              color: isAudioMuted ? '#94A3B8' : '#7C3AED',
               fontSize: '0.6875rem',
               fontWeight: 700,
               cursor: 'pointer',

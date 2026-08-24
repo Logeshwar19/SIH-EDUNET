@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Navbar from './components/Navbar';
+import HeroLanding from './components/HeroLanding';
 import TeacherDashboard from './components/TeacherDashboard';
 import DeafModule from './components/DeafModule';
 import BlindModule from './components/BlindModule';
@@ -16,7 +17,7 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState('teacher'); // 'teacher', 'deaf', 'blind'
   const [lessons, setLessons] = useState(initialLessons);
-  const [currentLessonId, setCurrentLessonId] = useState('lesson-heart-anatomy');
+  const [currentLessonId, setCurrentLessonId] = useState(null);
   const [students, setStudents] = useState(initialStudents);
 
   // Live Lecture State
@@ -25,24 +26,22 @@ export default function App() {
   const [liveLectureTranscript, setLiveLectureTranscript] = useState('');
   const [liveTeacherReply, setLiveTeacherReply] = useState(null); // { glosses, rawText }
 
-  const [inboxMessages, setInboxMessages] = useState([
-    {
-      id: "msg-init-1",
-      studentName: "Rohan Patel (Deaf)",
-      message: "Signed: Teacher, I completed the Heart circulation sign practice.",
-      timestamp: new Date(Date.now() - 1800000).toISOString()
-    },
-    {
-      id: "msg-init-2",
-      studentName: "Ananya Sharma (Blind)",
-      message: "Completed Voice Quiz for 'The Human Heart & Circulatory System' with 100% score.",
-      timestamp: new Date(Date.now() - 900000).toISOString()
-    }
-  ]);
+  const [inboxMessages, setInboxMessages] = useState([]);
 
   // Accessibility Controls
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [hapticsEnabled, setHapticsEnabled] = useState(true);
+
+  // Handle URL parameters on load for direct room/role join
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const roleParam = params.get('role');
+      if (roleParam === 'deaf' || roleParam === 'blind' || roleParam === 'teacher') {
+        setActiveTab(roleParam);
+      }
+    } catch (e) {}
+  }, []);
 
   // Fetch backend lessons if server is running
   useEffect(() => {
@@ -60,31 +59,23 @@ export default function App() {
 
   // ── Live Lecture Controls ───────────────────────────────────────────────────
   const handleStartLiveLecture = useCallback(() => {
-    const started = startLectureRecording((glosses, rawText, isFinal) => {
-      if (isFinal && glosses.length > 0) {
-        setLiveLectureGlosses(prev => {
-          const next = [...prev, ...glosses];
-          return next.slice(-40); // keep rolling 40-token window
-        });
-        setLiveLectureTranscript(prev => {
-          const lines = prev.split('\n').filter(Boolean);
-          lines.push(rawText);
-          return lines.slice(-8).join('\n'); // last 8 lines
-        });
-      }
-    });
-    if (started) {
-      setIsLiveLecture(true);
-      setLiveLectureGlosses([]);
-      setLiveLectureTranscript('');
-    } else {
-      alert('Microphone / Speech Recognition not available in this browser. Please use Chrome or Edge.');
-    }
+    setIsLiveLecture(true);
+    setLiveLectureGlosses([]);
+    setLiveLectureTranscript('');
   }, []);
 
   const handleStopLiveLecture = useCallback(() => {
-    stopLectureRecording();
     setIsLiveLecture(false);
+  }, []);
+
+  const handleLiveTranscriptUpdate = useCallback((glosses, rawText) => {
+    setLiveLectureTranscript(rawText);
+    if (Array.isArray(glosses) && glosses.length > 0) {
+      setLiveLectureGlosses(prev => {
+        const next = [...prev, ...glosses];
+        return next.slice(-40);
+      });
+    }
   }, []);
 
   // Listen for teacher reply broadcasts
@@ -112,36 +103,53 @@ export default function App() {
   };
 
   const handleSavePractice = (payload) => {
-    const signWord = payload.sign || payload.word || "Gesture";
-    const score = payload.score || 90;
-    const meaning = payload.meaning || signWord;
-    const isMatched = payload.matched !== undefined ? payload.matched : true;
-    const matchScore = payload.matchScore !== undefined ? Math.round(payload.matchScore * 100) : 91;
-    const lessonTitle = payload.lesson || "Current Lesson";
+    try {
+      const signWord = payload?.sign || payload?.word || "Gesture";
+      const score = payload?.score || 90;
+      const meaning = payload?.meaning || signWord;
+      const isMatched = payload?.matched !== undefined ? payload.matched : true;
+      const matchScore = payload?.matchScore !== undefined ? Math.round(payload.matchScore * 100) : 91;
+      const lessonTitle = payload?.lesson || "Current Lesson";
 
-    setStudents(prev => {
-      const copy = [...prev];
-      const rohan = copy.find(s => s.id === 'student-rohan') || copy[0];
-      rohan.recentSignSubmissions.unshift({
-        word: signWord,
-        meaning,
-        score,
-        matchScore,
-        lesson: lessonTitle,
-        matched: isMatched,
-        timestamp: "Just now",
-        status: isMatched ? "Lesson Relevant" : "Reviewed"
+      setStudents(prev => {
+        const copy = Array.isArray(prev) ? [...prev] : [];
+        let rohan = copy.find(s => s && s.id === 'student-rohan');
+        if (!rohan) {
+          rohan = {
+            id: 'student-rohan',
+            name: 'Rohan Patel (Deaf Student)',
+            role: 'Deaf Student',
+            signAccuracyAvg: score,
+            recentSignSubmissions: []
+          };
+          copy.push(rohan);
+        }
+        if (!Array.isArray(rohan.recentSignSubmissions)) {
+          rohan.recentSignSubmissions = [];
+        }
+        rohan.recentSignSubmissions.unshift({
+          word: signWord,
+          meaning,
+          score,
+          matchScore,
+          lesson: lessonTitle,
+          matched: isMatched,
+          timestamp: "Just now",
+          status: isMatched ? "Lesson Relevant" : "Reviewed"
+        });
+        const total = rohan.recentSignSubmissions.reduce((acc, curr) => acc + (curr.score || 0), 0);
+        rohan.signAccuracyAvg = Math.round(total / Math.max(1, rohan.recentSignSubmissions.length));
+        return copy;
       });
-      const total = rohan.recentSignSubmissions.reduce((acc, curr) => acc + curr.score, 0);
-      rohan.signAccuracyAvg = Math.round(total / rohan.recentSignSubmissions.length);
-      return copy;
-    });
 
-    fetch('/api/sign-practice/evaluate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId: 'student-rohan', word: signWord, score, meaning, matched: isMatched })
-    }).catch(() => {});
+      fetch('/api/sign-practice/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: 'student-rohan', word: signWord, score, meaning, matched: isMatched })
+      }).catch(() => {});
+    } catch (err) {
+      console.warn("handleSavePractice safe fallback:", err);
+    }
   };
 
   const handleSendMessageToTeacher = ({ studentName, recognizedSignText }) => {
@@ -195,6 +203,7 @@ export default function App() {
             isLiveLecture={isLiveLecture}
             onStartLiveLecture={handleStartLiveLecture}
             onStopLiveLecture={handleStopLiveLecture}
+            onTranscriptUpdate={handleLiveTranscriptUpdate}
             liveLectureGlosses={liveLectureGlosses}
             liveLectureTranscript={liveLectureTranscript}
             onTeacherReply={handleTeacherReply}

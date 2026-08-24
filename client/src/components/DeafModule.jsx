@@ -36,9 +36,9 @@ import {
 } from 'lucide-react';
 import { ISL_VOCABULARY, ISL_PIPELINE_CONFIG } from '../data/islVocabulary.js';
 import { ISLModelAdapter, MODEL_MODES, ABS6187_METADATA } from '../services/islModelAdapter.js';
-import { subscribeTeacherReply } from '../services/liveLecture.js';
+import { subscribeTeacherReply, subscribeRoomSession, DEFAULT_ROOM_CODE, subscribeToLiveNotifications, followTeacher, unfollowTeacher, isFollowingTeacher, getTeacherProfiles } from '../services/liveLecture.js';
 import SignVisualizer from './SignVisualizer.jsx';
-import { convertTextToISLSequence } from '../services/signDictionary.js';
+import { convertTextToISLSequence, translateISLToTamil } from '../services/signDictionary.js';
 
 export default function DeafModule({
   lesson,
@@ -46,13 +46,37 @@ export default function DeafModule({
   onSendMessageToTeacher,
   isLiveLecture,
   liveLectureGlosses,
+  liveLectureTranscript,
   liveTeacherReply,
 }) {
   const [activeTab, setActiveTab] = useState('live_lecture'); // 'live_lecture', 'text_to_sign', 'sign_to_text', 'quiz'
 
+  // ── Live Notification State ──
+  const [liveNotification, setLiveNotification] = useState(null); // { teacherId, teacherName, roomCode, lessonTitle }
+  const [followedTeachers, setFollowedTeachers] = useState(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('inclusiveai_followed_teachers') || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [teacherProfilesMap, setTeacherProfilesMap] = useState({});
+
+  const isFollowed = (tid) => Array.isArray(followedTeachers) && !!tid && followedTeachers.includes(tid);
+
+  // Room & Live Teacher Streaming State
+  const [studentRoomCode, setStudentRoomCode] = useState(DEFAULT_ROOM_CODE);
+  const [isRoomConnected, setIsRoomConnected] = useState(true);
+  const [teacherLiveVideoFrame, setTeacherLiveVideoFrame] = useState(null);
+  const [isRoomBroadcastLive, setIsRoomBroadcastLive] = useState(false);
+  const [roomTranscript, setRoomTranscript] = useState('');
+  const [roomGlosses, setRoomGlosses] = useState([]);
+  const [liveTeacherInfo, setLiveTeacherInfo] = useState(null); // { name, id, subject }
+
   // Text-to-Sign state
-  const [inputTextForSign, setInputTextForSign] = useState('teacher explains blood circulation in human heart');
-  const [activeSignText, setActiveSignText] = useState('teacher explains blood circulation in human heart');
+  const [inputTextForSign, setInputTextForSign] = useState('');
+  const [activeSignText, setActiveSignText] = useState('');
 
   // Live Mic Voice-to-Sign State
   const [isMicRecording, setIsMicRecording] = useState(false);
@@ -78,11 +102,11 @@ export default function DeafModule({
   const [liveRecognition, setLiveRecognition] = useState(null);
   const [liveLessonMatch, setLiveLessonMatch] = useState(null);
   const [autoMatchSuccess, setAutoMatchSuccess] = useState(false);
-  const [speechFeedbackEnabled, setSpeechFeedbackEnabled] = useState(true);
+  const [speechFeedbackEnabled, setSpeechFeedbackEnabled] = useState(false);
 
   // Sign-to-Text Generated Natural Doubt
-  const [detectedSignSequence, setDetectedSignSequence] = useState(['TEACHER', 'QUESTION', 'HEART', 'PUMP']);
-  const [aiFormattedDoubt, setAiFormattedDoubt] = useState('Teacher, could you please explain how the heart pumps blood through the ventricles?');
+  const [detectedSignSequence, setDetectedSignSequence] = useState([]);
+  const [aiFormattedDoubt, setAiFormattedDoubt] = useState('');
   const [customSignMessage, setCustomSignMessage] = useState('');
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [messageSentSuccess, setMessageSentSuccess] = useState(false);
@@ -90,6 +114,12 @@ export default function DeafModule({
   // Teacher Reply Strip
   const [teacherReplyGlosses, setTeacherReplyGlosses] = useState([]);
   const [teacherReplyText, setTeacherReplyText] = useState('');
+
+  // Direct Text-to-Text Conversation state
+  const [directChatMessages, setDirectChatMessages] = useState([
+    { id: '1', sender: 'Teacher', text: 'Welcome to class! You can type questions here in real-time or sign on camera.', time: 'Live' }
+  ]);
+  const [directChatInput, setDirectChatInput] = useState('');
 
   // Quiz State
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
@@ -112,6 +142,63 @@ export default function DeafModule({
   const practiceWords = lesson?.islModule?.practiceWords || ISL_VOCABULARY;
   const quizItems = lesson?.islModule?.quiz || [];
 
+  // Subscribe to live room broadcast (video frames, transcript, glosses)
+  useEffect(() => {
+    // Load teacher profiles for display
+    setTeacherProfilesMap(getTeacherProfiles());
+  }, []);
+
+  // Subscribe to LIVE_CLASS_STARTED / LIVE_CLASS_ENDED notifications
+  useEffect(() => {
+    const unsub = subscribeToLiveNotifications((data) => {
+      if (data?.type === 'LIVE_CLASS_STARTED') {
+        setLiveNotification({
+          teacherId: data.teacherId || 'TCH-0000',
+          teacherName: data.teacherName || 'Teacher',
+          teacherSubject: data.teacherSubject || '',
+          roomCode: data.roomCode || DEFAULT_ROOM_CODE,
+          lessonTitle: data.lessonTitle || 'Live Class'
+        });
+      } else if (data?.type === 'LIVE_CLASS_ENDED') {
+        setLiveNotification(null);
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!studentRoomCode) return;
+    const unsub = subscribeRoomSession(studentRoomCode, {
+      onVideoFrame: (frameData) => {
+        setTeacherLiveVideoFrame(frameData);
+        setIsRoomBroadcastLive(true);
+      },
+      onTranscript: (rawText) => {
+        setRoomTranscript(rawText);
+        if (rawText && rawText.trim()) {
+          setActiveSignText(rawText.trim());
+        }
+      },
+      onGlosses: (g) => {
+        setRoomGlosses(g);
+      },
+      onStatus: (status) => {
+        setIsRoomBroadcastLive(status.isLive);
+        if (status.isLive) {
+          setLiveTeacherInfo({ name: status.teacherName, id: status.teacherId, subject: status.teacherSubject });
+        } else {
+          setTeacherLiveVideoFrame(null);
+          setLiveTeacherInfo(null);
+        }
+      },
+      onTeacherReply: (g, t) => {
+        setTeacherReplyGlosses(g);
+        setTeacherReplyText(t);
+      }
+    });
+    return unsub;
+  }, [studentRoomCode]);
+
   // Subscribe to teacher reply via BroadcastChannel
   useEffect(() => {
     const unsub = subscribeTeacherReply((glosses, rawText) => {
@@ -126,6 +213,12 @@ export default function DeafModule({
     if (liveTeacherReply) {
       setTeacherReplyGlosses(liveTeacherReply.glosses);
       setTeacherReplyText(liveTeacherReply.rawText);
+      if (liveTeacherReply.rawText) {
+        setDirectChatMessages(prev => [
+          ...prev,
+          { id: `reply-${Date.now()}`, sender: 'Teacher (Live Reply)', text: liveTeacherReply.rawText, time: 'Just now' }
+        ]);
+      }
     }
   }, [liveTeacherReply]);
 
@@ -204,9 +297,9 @@ export default function DeafModule({
     }
   };
 
-  // Load MediaPipe scripts
+  // Load MediaPipe scripts (Hands + Pose Landmarker)
   const loadMediaPipeScripts = async () => {
-    if (window.Hands && window.Camera) return { Hands: window.Hands, Camera: window.Camera };
+    if (window.Hands && window.Pose && window.Camera) return { Hands: window.Hands, Pose: window.Pose, Camera: window.Camera };
     const loadScript = (src) => new Promise((resolve, reject) => {
       if (document.querySelector(`script[src="${src}"]`)) return resolve();
       const script = document.createElement('script');
@@ -219,10 +312,11 @@ export default function DeafModule({
     try {
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
       await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
-      return { Hands: window.Hands, Camera: window.Camera };
+      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
+      return { Hands: window.Hands, Pose: window.Pose, Camera: window.Camera };
     } catch (e) {
       console.warn("MediaPipe CDN load note:", e);
-      return { Hands: window.Hands, Camera: window.Camera };
+      return { Hands: window.Hands, Pose: window.Pose, Camera: window.Camera };
     }
   };
 
@@ -249,37 +343,56 @@ export default function DeafModule({
       const doubtText = generateNaturalDoubtFromSign(recognizedWord, lesson);
       setAiFormattedDoubt(doubtText);
 
-      if (speechFeedbackEnabled) {
-        speakText(`Detected sign: ${recognition.word}`);
+      // Convert sign directly to text and send to teacher inbox + live conversation (no voice audio)
+      if (onSendMessageToTeacher && doubtText) {
+        try {
+          onSendMessageToTeacher({
+            studentName: "Rohan Patel (Deaf Student)",
+            recognizedSignText: doubtText,
+            activeLesson: lesson?.title || "Classroom Session",
+            timestamp: new Date().toISOString()
+          });
+          setDirectChatMessages(prev => [
+            ...prev,
+            { id: `auto-${Date.now()}`, sender: 'You (Camera Sign AI)', text: doubtText, time: 'Just now' }
+          ]);
+          setMessageSentSuccess(true);
+          setTimeout(() => setMessageSentSuccess(false), 4000);
+        } catch (e) {}
       }
 
-      onSavePractice({
-        sign: recognition.word,
-        meaning: lessonMatch?.concept || recognition.word,
-        matched: lessonMatch?.matched || false,
-        matchScore: lessonMatch?.score || 0,
-        lesson: lesson?.title || "Curriculum Lesson",
-        score: recognition.confidence,
-        timestamp: new Date().toISOString()
-      });
+      if (onSavePractice) {
+        try {
+          onSavePractice({
+            sign: recognition.word,
+            meaning: lessonMatch?.concept || recognition.word,
+            matched: lessonMatch?.matched || false,
+            matchScore: lessonMatch?.score || 0,
+            lesson: lesson?.title || "Curriculum Lesson",
+            score: recognition.confidence,
+            timestamp: new Date().toISOString()
+          });
+        } catch (e) {}
+      }
     }
-  }, [lesson, speechFeedbackEnabled, onSavePractice]);
+  }, [lesson, onSendMessageToTeacher, onSavePractice]);
 
-  // Convert raw sign tokens to natural English question
+  // Convert raw sign tokens to natural English + Tamil question
   const generateNaturalDoubtFromSign = (sign, activeLesson) => {
     const s = sign.toUpperCase();
+    const tamilTerm = translateISLToTamil(s) || s;
     if (s === 'HEART' || s === 'PUMP') {
-      return `Teacher, I have a doubt: How does the human heart pump oxygenated blood through the circulatory system?`;
+      return `Teacher, I have a doubt: How does the human heart pump oxygenated blood through the circulatory system?\n(ஆசிரியர் அவர்களே, மனித இதயம் எவ்வாறு இரத்தத்தை பம்ப் செய்கிறது என்று விளக்குவீர்களா?)`;
     } else if (s === 'OXYGEN') {
-      return `Teacher, how does oxygen get absorbed into red blood cells in the lungs?`;
+      return `Teacher, how does oxygen get absorbed into red blood cells in the lungs?\n(ஆசிரியர் அவர்களே, ஆக்ஸிஜன் வாயு எவ்வாறு நுரையீரலில் உள்ள இரத்தத்தில் சேர்கிறது?)`;
     } else if (s === 'SCIENCE') {
-      return `Teacher, could you explain the experimental scientific mechanism behind this topic?`;
+      return `Teacher, could you explain the experimental scientific mechanism behind this topic?\n(ஆசிரியர் அவர்களே, இந்த அறிவியல் சோதனையின் செயல்முறையை விளக்குவீர்களா?)`;
     } else if (s === 'QUESTION' || s === 'HELP') {
-      return `Teacher, I didn't fully understand this part of the lecture. Could you please explain again with the diagram?`;
+      return `Teacher, I didn't fully understand this part of the lecture. Could you please explain again with the diagram?\n(ஆசிரியர் அவர்களே, இந்த பகுதி புரியவில்லை. மீண்டும் வரைபடத்துடன் விளக்குவீர்களா?)`;
     } else if (s === 'REPEAT') {
-      return `Teacher, could you please repeat the last concept?`;
+      return `Teacher, could you please repeat the last concept?\n(ஆசிரியர் அவர்களே, கடைசி கருத்தை மீண்டும் கூறுவீர்களா?)`;
     }
-    return `Teacher, I signed "${sign}" and have a doubt regarding ${activeLesson?.title || 'this lesson'}.`;
+    return `Teacher, I signed "${sign}" (${tamilTerm}) and have a doubt regarding ${activeLesson?.title || 'this lesson'}.\n(ஆசிரியர் அவர்களே, நான் "${tamilTerm}" என சைகை செய்தேன்.)`;
   };
 
   // Draw hand landmarks on canvas
@@ -405,14 +518,36 @@ export default function DeafModule({
       });
       setIsSendingMessage(false);
       setMessageSentSuccess(true);
+      setDirectChatMessages(prev => [
+        ...prev,
+        { id: `doubt-${Date.now()}`, sender: 'You (Doubt AI)', text: msg, time: 'Just now' }
+      ]);
       setTimeout(() => setMessageSentSuccess(false), 4000);
     }, 400);
+  };
+
+  const handleSendDirectChat = (e) => {
+    e?.preventDefault();
+    if (!directChatInput.trim()) return;
+    const msg = directChatInput.trim();
+    setDirectChatMessages(prev => [
+      ...prev,
+      { id: `msg-${Date.now()}`, sender: 'You (Student)', text: msg, time: 'Just now' }
+    ]);
+    onSendMessageToTeacher({
+      studentName: "Rohan Patel (Deaf Student)",
+      recognizedSignText: msg,
+      activeLesson: lesson?.title || "Classroom Session",
+      timestamp: new Date().toISOString()
+    });
+    setDirectChatInput('');
   };
 
   const TABS = [
     { id: 'live_lecture', label: '● Live Class Broadcast', icon: Radio },
     { id: 'text_to_sign', label: 'Text → Sign Engine', icon: Type },
     { id: 'sign_to_text', label: 'Sign → Text & Doubt AI', icon: Camera },
+    { id: 'text_chat', label: '💬 Text Conversation', icon: MessageSquare },
     { id: 'quiz', label: 'Sign Language Quiz', icon: Award },
   ];
 
@@ -506,57 +641,212 @@ export default function DeafModule({
         </div>
       </div>
 
-      {/* ─── TAB 1: LIVE CLASSROOM BROADCAST (Voice -> ISL Sign Language) ───── */}
+      {/* LIVE NOTIFICATION MODAL */}
+      {liveNotification && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: '#18181b', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '24px', padding: '2.5rem 2.25rem', maxWidth: '420px', width: '90%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem', boxShadow: '0 25px 60px rgba(0,0,0,0.6)' }}>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg, #27272a, #3f3f46)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem' }}>👩‍🏫</div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}><span className="live-dot" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#ef4444', boxShadow: '0 0 8px #ef4444' }} />Live Class Started</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>{liveNotification.teacherName}</div>
+              <div style={{ fontSize: '0.85rem', color: '#a1a1aa', marginTop: 4 }}>{liveNotification.teacherSubject}</div>
+              <div style={{ fontSize: '0.8rem', color: '#e4e4e7', marginTop: '0.75rem', padding: '0.5rem 1rem', background: '#27272a', borderRadius: '10px' }}>{liveNotification.lessonTitle}</div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', width: '100%' }}>
+              <button onClick={() => { setStudentRoomCode(liveNotification.roomCode); setActiveTab('live_lecture'); setLiveNotification(null); }} style={{ flex: 1, padding: '0.75rem 1rem', background: '#ffffff', color: '#09090b', border: 'none', borderRadius: '14px', fontSize: '0.875rem', fontWeight: 800, cursor: 'pointer' }}>✅ Join Class</button>
+              <button onClick={() => setLiveNotification(null)} style={{ flex: 1, padding: '0.75rem 1rem', background: '#27272a', color: '#a1a1aa', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer' }}>Ignore</button>
+            </div>
+            <button onClick={() => {
+              const tid = liveNotification?.teacherId;
+              if (!tid) return;
+              const already = isFollowed(tid);
+              if (already) {
+                unfollowTeacher(tid);
+                setFollowedTeachers(f => (Array.isArray(f) ? f.filter(x => x !== tid) : []));
+              } else {
+                followTeacher(tid);
+                setFollowedTeachers(f => [...(Array.isArray(f) ? f : []), tid]);
+              }
+            }} style={{ fontSize: '0.75rem', color: '#71717a', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+              {isFollowed(liveNotification?.teacherId) ? 'Unfollow this teacher' : 'Follow this teacher for future alerts'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── TAB 1: LIVE CLASSROOM BROADCAST (Live Teacher Video & ISL Sign Stream) ───── */}
       {activeTab === 'live_lecture' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          
-          {/* Live Stream Stage Card */}
-          <div className="ref-card" style={{ padding: '1.75rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div style={{ width: 40, height: 40, borderRadius: '12px', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
-                  <Radio style={{ width: 20, height: 20 }} />
-                </div>
-                <div>
-                  <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
-                    Live Classroom Voice → ISL Sign Stream
-                  </h3>
-                  <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0 }}>
-                    Teacher's live spoken lecture converts automatically into real-time Sign Language gestures
-                  </p>
-                </div>
-              </div>
 
-              {/* Local Mic Toggle Button */}
-              <button
-                onClick={toggleMicVoiceToSign}
-                className={isMicRecording ? 'btn-secondary' : 'btn-primary'}
-                style={{ border: isMicRecording ? '1px solid #ef4444' : 'none' }}
-              >
-                {isMicRecording ? <MicOff style={{ width: 15, height: 15 }} /> : <Mic style={{ width: 15, height: 15 }} />}
-                <span>{isMicRecording ? 'Stop Voice Mic' : 'Record Classroom Mic'}</span>
+          {/* Teacher Profile Card (when connected) */}
+          {(isRoomBroadcastLive || isLiveLecture) && liveTeacherInfo && (
+            <div className="ref-card" style={{ padding: '1rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg, #3f3f46, #52525b)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', flexShrink: 0 }}>👩‍🏫</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#ffffff' }}>{liveTeacherInfo.name}</div>
+                <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>{liveTeacherInfo.subject} • ID: <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{liveTeacherInfo.id}</span></div>
+              </div>
+              <button onClick={() => {
+                const tid = liveTeacherInfo?.id;
+                if (!tid) return;
+                const already = isFollowed(tid);
+                if (already) {
+                  unfollowTeacher(tid);
+                  setFollowedTeachers(f => (Array.isArray(f) ? f.filter(x => x !== tid) : []));
+                } else {
+                  followTeacher(tid);
+                  setFollowedTeachers(f => [...(Array.isArray(f) ? f : []), tid]);
+                }
+              }} style={{ padding: '0.4rem 1rem', background: isFollowed(liveTeacherInfo?.id) ? '#27272a' : '#3f3f46', border: `1px solid ${isFollowed(liveTeacherInfo?.id) ? '#52525b' : 'rgba(255,255,255,0.2)'}`, borderRadius: '10px', color: isFollowed(liveTeacherInfo?.id) ? '#a1a1aa' : '#e4e4e7', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+                {isFollowed(liveTeacherInfo?.id) ? '✓ Following' : '+ Follow'}
               </button>
             </div>
-
-            {/* Visual Sign Player linked to Live Speech */}
-            <SignVisualizer
-              text={activeSignText || (liveLectureGlosses?.length > 0 ? liveLectureGlosses.join(' ') : 'Teacher explains blood circulation in human heart')}
-              speed={1.0}
-            />
-
-            {/* Live Caption Strip */}
-            <div style={{ marginTop: '1rem' }}>
-              <p style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
-                Live ISL Sign Closed Captions
-              </p>
-              <div className="caption-strip">
-                {(liveLectureGlosses?.length > 0 ? liveLectureGlosses : (micTranscript ? micTranscript.toUpperCase().split(' ') : ['TEACHER', 'EXPLAINS', 'HEART', 'PUMP', 'BLOOD', 'OXYGEN'])).map((token, idx) => (
-                  <span key={idx} className="caption-token new">
-                    {typeof token === 'string' ? token : (token.word || token.token)}
-                  </span>
-                ))}
+          )}
+          
+          {/* Room Join & Connection Bar */}
+          <div className="ref-card" style={{ padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ width: 36, height: 36, borderRadius: '10px', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
+                <Radio style={{ width: 18, height: 18, color: (isRoomBroadcastLive || isLiveLecture) ? '#ef4444' : '#a1a1aa' }} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 800, color: '#ffffff' }}>
+                  Live Class Stream • Google Meet Room
+                </h4>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: '#a1a1aa' }}>
+                  {(isRoomBroadcastLive || isLiveLecture) ? '🟢 Connected to live classroom broadcast' : 'Awaiting teacher to start live video class'}
+                </p>
               </div>
             </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <span style={{
+                fontSize: '0.75rem',
+                fontWeight: 800,
+                padding: '0.35rem 0.85rem',
+                borderRadius: '9999px',
+                background: (isRoomBroadcastLive || isLiveLecture) ? 'rgba(52, 211, 153, 0.15)' : '#27272a',
+                color: (isRoomBroadcastLive || isLiveLecture) ? '#34d399' : '#a1a1aa',
+                border: (isRoomBroadcastLive || isLiveLecture) ? '1px solid rgba(52, 211, 153, 0.4)' : '1px solid rgba(255, 255, 255, 0.12)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem'
+              }}>
+                {(isRoomBroadcastLive || isLiveLecture) ? '🔴 AUTO-JOINED LIVE CLASS' : '● SYNCED TO TEACHER ROOM'}
+              </span>
+            </div>
+          </div>
+
+          {/* Dual-Pane Stage: Teacher's Live Video Feed + Animated ISL Sign Visualizer */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(320px, 1.2fr)', gap: '1.5rem', alignItems: 'stretch' }}>
+            
+            {/* Left: Teacher's Live Video Feed */}
+            <div className="ref-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Video style={{ width: 16, height: 16, color: '#ffffff' }} />
+                  <h4 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 800, color: '#ffffff' }}>
+                    Teacher Live Camera Feed
+                  </h4>
+                </div>
+                {(isRoomBroadcastLive || isLiveLecture) && (
+                  <span className="live-badge" style={{ fontSize: '0.65rem' }}>
+                    <span className="live-dot" /> LIVE VIDEO
+                  </span>
+                )}
+              </div>
+
+              {/* Video Viewport */}
+              <div style={{
+                position: 'relative',
+                width: '100%',
+                aspectRatio: '16/10',
+                background: '#09090b',
+                borderRadius: '16px',
+                overflow: 'hidden',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {teacherLiveVideoFrame ? (
+                  <img
+                    src={teacherLiveVideoFrame}
+                    alt="Teacher Live Classroom Stream"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <div style={{ textAlign: 'center', color: '#a1a1aa', padding: '1.5rem' }}>
+                    <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', margin: '0 auto 0.75rem auto' }}>
+                      <Video style={{ width: 24, height: 24 }} />
+                    </div>
+                    <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                      {(isRoomBroadcastLive || isLiveLecture) ? 'Receiving Teacher Stream...' : 'Teacher Video Classroom Ready'}
+                    </p>
+                    <p style={{ fontSize: '0.75rem', color: '#71717a', margin: '0.25rem 0 0 0' }}>
+                      {(isRoomBroadcastLive || isLiveLecture) ? 'Camera stream active from room host' : `Teacher will appear here when class begins in ${studentRoomCode}`}
+                    </p>
+                  </div>
+                )}
+
+                {(isRoomBroadcastLive || isLiveLecture) && (
+                  <div style={{ position: 'absolute', bottom: 10, left: 10, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', padding: '0.2rem 0.55rem', borderRadius: '6px', fontSize: '0.6875rem', fontWeight: 700, color: '#ffffff' }}>
+                    Host: Teacher
+                  </div>
+                )}
+              </div>
+
+              {/* Live Transcript Box below teacher video */}
+              <div style={{ background: '#121215', borderRadius: '12px', padding: '0.75rem', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', display: 'block', marginBottom: '0.25rem' }}>
+                  Live Teacher Spoken Words:
+                </span>
+                <p style={{ fontSize: '0.8125rem', color: '#d4d4d8', margin: 0, lineHeight: 1.4 }}>
+                  {roomTranscript || liveLectureTranscript || (
+                    <span style={{ color: '#71717a', fontStyle: 'italic' }}>Listening to teacher speech…</span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Right: Live ISL Sign Language Animation Visualizer */}
+            <div className="ref-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Hand style={{ width: 16, height: 16, color: '#ffffff' }} />
+                  <h4 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 800, color: '#ffffff' }}>
+                    Synchronized Indian Sign Language (ISL) Avatar
+                  </h4>
+                </div>
+                <span style={{ fontSize: '0.6875rem', padding: '0.15rem 0.5rem', background: '#27272a', color: '#ffffff', borderRadius: '999px', fontWeight: 700 }}>
+                  Real-time Sign Synthesizer
+                </span>
+              </div>
+
+              {/* Visual Sign Player linked to Live Speech */}
+              <SignVisualizer
+                text={roomTranscript || activeSignText || ''}
+                speed={1.0}
+              />
+
+              {/* Live Caption Strip */}
+              <div style={{ marginTop: '0.25rem' }}>
+                <p style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>
+                  Live ISL Sign Tokens:
+                </p>
+                <div className="caption-strip" style={{ minHeight: '44px' }}>
+                  {(roomGlosses?.length > 0 ? roomGlosses : (liveLectureGlosses?.length > 0 ? liveLectureGlosses : [])).length > 0
+                    ? (roomGlosses?.length > 0 ? roomGlosses : liveLectureGlosses).map((token, idx) => (
+                        <span key={idx} className="caption-token new">
+                          {typeof token === 'string' ? token : (token.word || token.token)}
+                        </span>
+                      ))
+                    : <span style={{ color: '#71717a', fontSize: '0.75rem', fontStyle: 'italic' }}>Waiting for teacher speech…</span>
+                  }
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
       )}
@@ -600,34 +890,66 @@ export default function DeafModule({
               }}
             />
 
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {[
-                "Human heart pumps oxygenated blood",
-                "Teacher answers student question",
-                "Photosynthesis in green plants",
-                "Please repeat the chapter explanation"
-              ].map((sample, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    setInputTextForSign(sample);
-                    setActiveSignText(sample);
-                  }}
-                  style={{
-                    padding: '0.35rem 0.75rem',
-                    borderRadius: '999px',
-                    background: '#18181b',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    fontSize: '0.6875rem',
-                    fontWeight: 700,
-                    color: '#d4d4d8',
-                    cursor: 'pointer',
-                  }}
-                >
-                  + "{sample}"
-                </button>
-              ))}
+
+
+            {/* File / Document Upload for Deaf Student */}
+            <div style={{ background: '#121215', padding: '1rem 1.25rem', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.12)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <BookOpen style={{ width: 15, height: 15, color: '#34d399' }} />
+                <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff' }}>
+                  Upload Document / PDF / Notes for ISL Synthesis
+                </span>
+              </div>
+              <input
+                type="file"
+                accept=".pdf,.txt,.doc,.docx"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    const file = e.target.files[0];
+                    const reader = new FileReader();
+                    reader.onload = (evt) => {
+                      const content = evt.target.result || '';
+                      setInputTextForSign(content.slice(0, 300));
+                      setActiveSignText(content.slice(0, 300));
+                    };
+                    reader.readAsText(file);
+                  }
+                }}
+                style={{ fontSize: '0.75rem', color: '#a1a1aa' }}
+              />
             </div>
+
+            {/* Quick Curriculum Concepts Picker from Teacher's Active Lesson */}
+            {lesson?.concepts && lesson.concepts.length > 0 && (
+              <div style={{ background: '#121215', padding: '1rem 1.25rem', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.12)', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff' }}>
+                  📖 Select Teacher's Slide Concepts to Generate Signs:
+                </span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                  {lesson.concepts.map((concept, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setInputTextForSign(concept);
+                        setActiveSignText(concept);
+                      }}
+                      style={{
+                        padding: '0.35rem 0.75rem',
+                        background: activeSignText === concept ? '#ffffff' : '#1f1f23',
+                        color: activeSignText === concept ? '#09090b' : '#d4d4d8',
+                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        borderRadius: '999px',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {concept}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <button
               onClick={() => setActiveSignText(inputTextForSign)}
@@ -740,13 +1062,18 @@ export default function DeafModule({
               )}
             </div>
 
-            {/* Last Recognized Gesture Indicator */}
+            {/* Last Recognized Gesture Indicator with Tamil Translation */}
             {isCameraActive && liveRecognition?.isKnown && (
               <div style={{ background: '#121215', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '14px', padding: '0.85rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <span style={{ fontSize: '0.625rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI Detected Gesture</span>
-                  <p style={{ fontSize: '1.25rem', fontWeight: 900, color: '#ffffff', margin: 0, fontFamily: 'var(--font-mono)' }}>
-                    {liveRecognition.word.toUpperCase()}
+                  <span style={{ fontSize: '0.625rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    AI Detected ISL Gesture (English + Tamil தமிழ்)
+                  </span>
+                  <p style={{ fontSize: '1.25rem', fontWeight: 900, color: '#ffffff', margin: 0, fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span>{liveRecognition.word.toUpperCase()}</span>
+                    <span style={{ fontSize: '0.95rem', color: '#34d399', fontWeight: 700 }}>
+                      ({translateISLToTamil(liveRecognition.word)})
+                    </span>
                   </p>
                 </div>
                 <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#34d399', background: '#18181b', padding: '0.2rem 0.6rem', borderRadius: '999px', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
@@ -767,30 +1094,57 @@ export default function DeafModule({
                   AI Sign-to-Text & Spoken Doubt Engine
                 </h3>
                 <p style={{ fontSize: '0.6875rem', color: '#a1a1aa', margin: 0 }}>
-                  AI converts your signs into natural spoken English for hearing teachers and peers
+                  Converts recognized ISL signs into clear natural English & Tamil questions
                 </p>
               </div>
             </div>
 
-            {/* Detected Tokens History */}
+            {/* Detected Tokens History with Tamil Badges and Clear Option */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', marginBottom: '0.35rem', textTransform: 'uppercase' }}>
-                Captured Sign Sequence:
-              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                <label style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase' }}>
+                  Captured Sign Sequence:
+                </label>
+                {detectedSignSequence.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setDetectedSignSequence([]);
+                      setAiFormattedDoubt('');
+                      setCustomSignMessage('');
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#ef4444',
+                      fontSize: '0.6875rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      textDecoration: 'underline'
+                    }}
+                  >
+                    Clear Sequence
+                  </button>
+                )}
+              </div>
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                {detectedSignSequence.map((token, idx) => (
-                  <span key={idx} style={{ padding: '0.25rem 0.65rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, color: '#ffffff', fontFamily: 'var(--font-mono)' }}>
-                    {token}
-                  </span>
-                ))}
+                {detectedSignSequence.length > 0 ? (
+                  detectedSignSequence.map((token, idx) => (
+                    <span key={idx} style={{ padding: '0.3rem 0.75rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, color: '#ffffff', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <span>{token}</span>
+                      <span style={{ fontSize: '0.6875rem', color: '#34d399', fontWeight: 700 }}>[{translateISLToTamil(token)}]</span>
+                    </span>
+                  ))
+                ) : (
+                  <span style={{ color: '#71717a', fontSize: '0.75rem', fontStyle: 'italic' }}>Sign in front of camera to capture ISL tokens…</span>
+                )}
               </div>
             </div>
 
-            {/* AI Formatted Question Output */}
+            {/* AI Formatted Question Output (Bilingual: English + Tamil) */}
             <div style={{ background: '#121215', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '16px', padding: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                 <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  AI Formatted English Doubt:
+                  AI Formatted Doubt (English & தமிழ்):
                 </span>
                 <button
                   onClick={() => speakText(aiFormattedDoubt)}
@@ -845,7 +1199,95 @@ export default function DeafModule({
         </div>
       )}
 
-      {/* ─── TAB 4: ISL QUIZ ─────────────────────────────────────────────────── */}
+      {/* ─── TAB 4: DIRECT TEXT-TO-TEXT CONVERSATION WITH TEACHER ───────── */}
+      {activeTab === 'text_chat' && (
+        <div style={{ maxWidth: '54rem', margin: '0 auto', width: '100%' }}>
+          <div className="ref-card" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                <div style={{ width: 38, height: 38, borderRadius: '10px', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
+                  <MessageSquare style={{ width: 20, height: 20 }} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                    Live Classroom Text Conversation
+                  </h3>
+                  <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0 }}>
+                    Direct two-way real-time messaging with your teacher & classroom
+                  </p>
+                </div>
+              </div>
+              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#34d399', background: 'rgba(52, 211, 153, 0.15)', border: '1px solid rgba(52, 211, 153, 0.3)', padding: '0.25rem 0.75rem', borderRadius: '999px' }}>
+                🟢 Live Connected
+              </span>
+            </div>
+
+            {/* Messages Stream */}
+            <div style={{ minHeight: '260px', maxHeight: '360px', overflowY: 'auto', background: '#121215', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.1)', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {directChatMessages.map((msg) => {
+                const isMe = msg.sender.includes('You');
+                return (
+                  <div
+                    key={msg.id}
+                    style={{
+                      alignSelf: isMe ? 'flex-end' : 'flex-start',
+                      maxWidth: '80%',
+                      background: isMe ? '#ffffff' : '#27272a',
+                      color: isMe ? '#09090b' : '#ffffff',
+                      padding: '0.75rem 1rem',
+                      borderRadius: isMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                      border: isMe ? 'none' : '1px solid rgba(255, 255, 255, 0.12)',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.25rem' }}>
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: isMe ? '#52525b' : '#34d399' }}>
+                        {msg.sender}
+                      </span>
+                      <span style={{ fontSize: '0.625rem', color: isMe ? '#71717a' : '#a1a1aa' }}>
+                        {msg.time}
+                      </span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, lineHeight: 1.4 }}>
+                      {msg.text}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Input Bar */}
+            <form onSubmit={handleSendDirectChat} style={{ display: 'flex', gap: '0.75rem' }}>
+              <input
+                type="text"
+                value={directChatInput}
+                onChange={(e) => setDirectChatInput(e.target.value)}
+                placeholder="Type your message or question to the teacher..."
+                style={{
+                  flex: 1,
+                  padding: '0.85rem 1.1rem',
+                  background: '#121215',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  borderRadius: '14px',
+                  color: '#ffffff',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  outline: 'none'
+                }}
+              />
+              <button
+                type="submit"
+                className="btn-primary"
+                style={{ padding: '0.85rem 1.25rem', gap: '0.5rem' }}
+              >
+                <Send style={{ width: 16, height: 16 }} /> Send
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── TAB 5: ISL QUIZ ─────────────────────────────────────────────────── */}
       {activeTab === 'quiz' && (
         <div style={{ maxWidth: '50rem', margin: '0 auto', width: '100%' }}>
           <div className="ref-card" style={{ padding: '2rem' }}>

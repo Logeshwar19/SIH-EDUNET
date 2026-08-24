@@ -42,9 +42,16 @@ export default function SignVisualizer({
       });
       setSequence(seq);
       setCurrentIndex(0);
-    } else if (text) {
+    } else if (text && text.trim().length > 0) {
       const seq = convertTextToISLSequence(text);
-      setSequence(seq);
+      if (seq.length > 0) {
+        setSequence(seq);
+        setCurrentIndex(0);
+        setIsPlaying(true);
+      }
+    } else {
+      // No text, no tokens — clear to idle state
+      setSequence([]);
       setCurrentIndex(0);
     }
   }, [text, tokens]);
@@ -140,6 +147,25 @@ export default function SignVisualizer({
         position: 'relative',
         textAlign: 'center',
       }}>
+        {/* IDLE STATE — shown when no speech has arrived yet */}
+        {sequence.length === 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{
+              width: '80px', height: '80px', borderRadius: '50%',
+              background: '#18181b',
+              border: '2px dashed rgba(255, 255, 255, 0.18)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '2rem',
+              animation: 'pulse 2.5s infinite',
+            }}>🤟</div>
+            <p style={{ fontSize: '0.875rem', color: '#71717a', margin: 0, fontWeight: 600 }}>
+              Waiting for live lecture speech…
+            </p>
+            <p style={{ fontSize: '0.75rem', color: '#52525b', margin: 0 }}>
+              Teacher speech will be translated to ISL signs in real time
+            </p>
+          </div>
+        ) : (<>
         {/* Sign Icon & Large Motion Display */}
         <div style={{
           width: '90px',
@@ -250,6 +276,7 @@ export default function SignVisualizer({
             {sequence.length > 0 ? `${currentIndex + 1}/${sequence.length}` : '0/0'}
           </span>
         </div>
+        </>)}
       </div>
 
       {/* Horizontal Sequence Strip */}

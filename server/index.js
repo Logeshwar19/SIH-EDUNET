@@ -97,16 +97,27 @@ sampleLessons.forEach(l => {
   };
 });
 
-// Fix 5: Add File Upload Validation & Limits
+// File Upload Validation & Limits (PDF, PPT, TXT, Diagrams/Images)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit
   fileFilter: (req, file, cb) => {
-    const allowed = ['application/pdf', 'text/plain'];
-    if (!allowed.includes(file.mimetype)) {
-      return cb(new Error('Only PDF and TXT files allowed'), false);
+    const allowed = [
+      'application/pdf',
+      'text/plain',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/svg+xml'
+    ];
+    const ext = (file.originalname || '').split('.').pop().toLowerCase();
+    const allowedExts = ['pdf', 'txt', 'md', 'ppt', 'pptx', 'png', 'jpg', 'jpeg', 'svg'];
+    if (allowed.includes(file.mimetype) || allowedExts.includes(ext)) {
+      return cb(null, true);
     }
-    cb(null, true);
+    cb(new Error('Supported formats: PDF, PPT/PPTX, TXT, and Diagram Images (PNG, JPG, SVG)'), false);
   }
 });
 

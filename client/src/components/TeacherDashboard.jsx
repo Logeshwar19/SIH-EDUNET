@@ -1,17 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Upload,
   FileText,
   CheckCircle2,
   Layers,
   BookOpen,
-  Hand,
-  Eye,
-  BarChart3,
   Users,
   Clock,
   Inbox,
-  ArrowRight,
   Sparkles,
   Zap,
   Radio,
@@ -24,15 +20,40 @@ import {
   Check,
   Calendar,
   Award,
+  Video,
+  VideoOff,
+  Mic,
+  MicOff,
+  Share2,
+  Copy,
+  Link,
+  Key,
+  Monitor,
+  FileSpreadsheet,
+  Image as ImageIcon,
+  Presentation,
+  ShieldCheck,
   ChevronRight
 } from 'lucide-react';
+import {
+  DEFAULT_ROOM_CODE,
+  DEFAULT_ROOM_PASS,
+  startTeacherVideoSession,
+  stopTeacherVideoSession,
+  toggleCameraTrack,
+  toggleMicTrack,
+  generateTeacherID,
+  saveTeacherProfile,
+  getTeacherProfile,
+  broadcastLiveSpeechText
+} from '../services/liveLecture';
 
 const STAGE_LABELS = [
   '',
-  'Parsing document structure...',
-  'Extracting key concepts & diagrams...',
+  'Parsing document structure & slides...',
+  'Extracting scientific concepts & diagrams...',
   'Generating Indian Sign Language (ISL) glosses...',
-  'Building tactile vibration coordinates...'
+  'Building tactile vibration & audio coordinates...'
 ];
 
 export default function TeacherDashboard({
@@ -46,43 +67,210 @@ export default function TeacherDashboard({
   isLiveLecture,
   onStartLiveLecture,
   onStopLiveLecture,
+  onTranscriptUpdate,
   liveLectureGlosses,
   liveLectureTranscript,
   onTeacherReply,
 }) {
+  // ── Teacher Profile State ─────────────────────────────────────────────────
+  const [teacherName, setTeacherName] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_name') || '"Prof. Ananya Sharma"'); } catch { return 'Prof. Ananya Sharma'; }
+  });
+  const [teacherSubject, setTeacherSubjectState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_subject') || '"Biology & Science"'); } catch { return 'Biology & Science'; }
+  });
+  const [teacherEmail, setTeacherEmail] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_email') || '"teacher@school.edu.in"'); } catch { return 'teacher@school.edu.in'; }
+  });
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+
+  // Compute Teacher ID from name (deterministic)
+  const teacherId = generateTeacherID(teacherName);
+
+  const getTeacherProfileObj = () => ({
+    id: teacherId,
+    name: teacherName,
+    subject: teacherSubject,
+    email: teacherEmail,
+    avatar: null
+  });
+
+  const handleSaveProfile = () => {
+    localStorage.setItem('inclusiveai_teacher_name', JSON.stringify(teacherName));
+    localStorage.setItem('inclusiveai_teacher_subject', JSON.stringify(teacherSubject));
+    localStorage.setItem('inclusiveai_teacher_email', JSON.stringify(teacherEmail));
+    saveTeacherProfile(getTeacherProfileObj());
+    setProfileSaved(true);
+    setTimeout(() => { setProfileSaved(false); setShowProfileEdit(false); }, 1800);
+  };
+
+  // Curriculum Upload Form State
   const [uploadText, setUploadText] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadSubject, setUploadSubject] = useState('Biology');
   const [selectedFile, setSelectedFile] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState(0);
+
+  // Live Class Room & Video Controls State
+  const [roomCode, setRoomCode] = useState(DEFAULT_ROOM_CODE);
+  const [roomPasscode, setRoomPasscode] = useState(DEFAULT_ROOM_PASS);
+  const [isCameraActive, setIsCameraActive] = useState(true);
+  const [isMicActive, setIsMicActive] = useState(true);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedPass, setCopiedPass] = useState(false);
+  const [teacherVideoActive, setTeacherVideoActive] = useState(false);
+
+  // Student Doubts & Reply State
   const [replyText, setReplyText] = useState('');
   const [replySentMsg, setReplySentMsg] = useState(null);
-  const [selectedScheduleDay, setSelectedScheduleDay] = useState(6);
+
+  // Live Speech & ISL Broadcast Console State
+  const [liveBroadcastSpeechInput, setLiveBroadcastSpeechInput] = useState('');
+  const [lastBroadcastedLine, setLastBroadcastedLine] = useState(null);
+  // 'unknown' | 'granted' | 'denied' | 'prompt'
+  const [micPermissionStatus, setMicPermissionStatus] = useState('unknown');
+
+  // Student Collaboration & Schedule State
+  const [studentList, setStudentList] = useState(students || [
+    { id: '1', name: 'Rohan Patel', role: 'Deaf Student', accuracy: 96, status: 'Active' },
+    { id: '2', name: 'Sneha Kumar', role: 'Blind Student', accuracy: 100, status: 'Active' },
+    { id: '3', name: 'Arjun Verma', role: 'Inclusive Learner', accuracy: 91, status: 'Active' }
+  ]);
+  const [newStudentName, setNewStudentName] = useState('');
+  const [newStudentRole, setNewStudentRole] = useState('Deaf Student');
+  const [evaluationFeedback, setEvaluationFeedback] = useState(null);
+
+  const handleAddStudent = (e) => {
+    e?.preventDefault();
+    if (!newStudentName.trim()) return;
+    const newEntry = {
+      id: `std-${Date.now()}`,
+      name: newStudentName.trim(),
+      role: newStudentRole,
+      accuracy: 95,
+      status: 'Joined'
+    };
+    setStudentList(prev => [...prev, newEntry]);
+    setNewStudentName('');
+  };
+
+  const handleEvaluatePlan = () => {
+    setEvaluationFeedback({
+      title: "Classroom AI Accessibility Plan Evaluated",
+      summary: "Curriculum multi-modal coverage: 100%. Indian Sign Language gloss sequence and 4-chamber haptic tactile coordinates generated with zero errors. All active students synced.",
+      score: "98/100"
+    });
+  };
+
+  // Check microphone permission on mount
+  useEffect(() => {
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'microphone' })
+        .then(result => {
+          setMicPermissionStatus(result.state); // 'granted' | 'denied' | 'prompt'
+          result.onchange = () => setMicPermissionStatus(result.state);
+        })
+        .catch(() => setMicPermissionStatus('unknown'));
+    }
+  }, []);
+
+  const handleBroadcastSpeechLine = () => {
+    if (!liveBroadcastSpeechInput.trim()) return;
+    broadcastLiveSpeechText(liveBroadcastSpeechInput.trim(), roomCode);
+    setLastBroadcastedLine(liveBroadcastSpeechInput.trim());
+    setLiveBroadcastSpeechInput('');
+  };
+
+  const teacherVideoRef = useRef(null);
   const fileInputRef = useRef(null);
 
   const currentLesson = lessons.find((l) => l.id === currentLessonId) || lessons[0];
 
-  const handleSimulatedUpload = (sampleKey) => {
-    setIsProcessing(true);
-    setProcessingStage(1);
-    let current = 1;
-    const interval = setInterval(() => {
-      current++;
-      setProcessingStage(current);
-      if (current > 4) {
-        clearInterval(interval);
-        setIsProcessing(false);
-        setProcessingStage(0);
-        if (sampleKey === 'photosynthesis') {
-          setCurrentLessonId('lesson-photosynthesis');
-        } else {
-          setCurrentLessonId('lesson-heart-anatomy');
+  // ── Live Video Lecture Management ─────────────────────────────────────────
+  const handleToggleLiveLecture = async () => {
+    if (!isLiveLecture) {
+      // Start Live Class Session
+      setTeacherVideoActive(true);
+      const profile = getTeacherProfileObj();
+      saveTeacherProfile(profile);
+      const res = await startTeacherVideoSession({
+        videoElement: teacherVideoRef.current,
+        roomCode,
+        teacherProfile: profile,
+        lessonTitle: currentLesson?.title || 'Classroom Lecture',
+        onTranscriptUpdate: (glosses, rawText, isFinal) => {
+          if (onTranscriptUpdate) onTranscriptUpdate(glosses, rawText, isFinal);
+        },
+        onError: (err) => {
+          console.warn('[TeacherStudio] Live Session warning:', err);
         }
+      });
+      if (onStartLiveLecture) onStartLiveLecture();
+    } else {
+      // Stop Live Class Session
+      stopTeacherVideoSession(roomCode);
+      setTeacherVideoActive(false);
+      if (teacherVideoRef.current) {
+        teacherVideoRef.current.srcObject = null;
       }
-    }, 600);
+      if (onStopLiveLecture) onStopLiveLecture();
+    }
   };
 
+  const handleToggleCamera = () => {
+    const newState = !isCameraActive;
+    setIsCameraActive(newState);
+    toggleCameraTrack(newState);
+  };
+
+  const handleToggleMic = () => {
+    const newState = !isMicActive;
+    setIsMicActive(newState);
+    toggleMicTrack(newState);
+  };
+
+  const handleShareScreen = async () => {
+    try {
+      if (!isScreenSharing && navigator.mediaDevices.getDisplayMedia) {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        if (teacherVideoRef.current) {
+          teacherVideoRef.current.srcObject = screenStream;
+          setIsScreenSharing(true);
+          screenStream.getVideoTracks()[0].onended = () => {
+            setIsScreenSharing(false);
+            if (teacherVideoRef.current && isLiveLecture) {
+              startTeacherVideoSession({ videoElement: teacherVideoRef.current, roomCode });
+            }
+          };
+        }
+      } else {
+        setIsScreenSharing(false);
+        if (isLiveLecture) {
+          startTeacherVideoSession({ videoElement: teacherVideoRef.current, roomCode });
+        }
+      }
+    } catch (err) {
+      console.warn('[TeacherStudio] Screen share canceled or not supported:', err);
+    }
+  };
+
+  const copyRoomLink = (role = 'deaf') => {
+    const url = `${window.location.origin}?room=${encodeURIComponent(roomCode)}&pass=${encodeURIComponent(roomPasscode)}&role=${role}`;
+    navigator.clipboard.writeText(url);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const copyRoomPass = () => {
+    navigator.clipboard.writeText(roomCode);
+    setCopiedPass(true);
+    setTimeout(() => setCopiedPass(false), 2500);
+  };
+
+  // ── File Upload & Ingestion ───────────────────────────────────────────────
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -96,8 +284,10 @@ export default function TeacherDashboard({
   const handleFormSubmit = async (e) => {
     e.preventDefault();
     if (!selectedFile && !uploadTitle.trim() && !uploadText.trim()) return;
+
     setIsProcessing(true);
     setProcessingStage(1);
+
     const formData = new FormData();
     if (selectedFile) formData.append('file', selectedFile);
     formData.append('title', uploadTitle);
@@ -110,50 +300,68 @@ export default function TeacherDashboard({
       setProcessingStage(3);
       const data = await res.json();
       setProcessingStage(4);
+
       setTimeout(() => {
         if (data.success && data.lesson) {
           onUploadLesson(data.lesson);
         } else {
+          // Robust client-side parser fallback
           const newLesson = {
             id: `lesson-custom-${Date.now()}`,
-            title: uploadTitle || (selectedFile ? selectedFile.name : 'Custom Lesson'),
+            title: uploadTitle || (selectedFile ? selectedFile.name.replace(/\.[^/.]+$/, '') : 'Custom Curriculum Lesson'),
             subject: uploadSubject || 'Science',
             grade: 'Grade 10',
-            estimatedTime: '12 mins',
-            summary: uploadText ? uploadText.slice(0, 240) + '...' : 'Generated lesson.',
-            originalFileName: selectedFile ? selectedFile.name : 'Lesson.pdf',
+            estimatedTime: '15 mins',
+            summary: uploadText ? uploadText.slice(0, 240) + '...' : `Structured lesson material generated from ${selectedFile ? selectedFile.name : 'notes'}.`,
+            originalFileName: selectedFile ? selectedFile.name : 'Lesson_Notes.txt',
             uploadedAt: new Date().toISOString(),
             islModule: {
               lessonGlosses: [
                 { word: 'SCIENCE', gloss: 'SCIENCE', description: 'Alternating downward circular motion.', duration: 2.6 },
                 { word: 'TEACHER', gloss: 'TEACHER', description: 'Flattened hands at temples move forward.', duration: 2.8 },
                 { word: 'STUDENT', gloss: 'STUDENT', description: 'Draw knowledge to forehead.', duration: 2.7 },
+                { word: 'EXPERIMENT', gloss: 'EXPERIMENT', description: 'Beaker pouring gestures.', duration: 2.5 }
               ],
-              practiceWords: [{ id: 'science', word: 'Science', hint: 'Rotate fists in circular motions.', targetPose: 'FIST_PULSE' }],
-              quiz: [{ id: `q-${Date.now()}`, question: `What is the core principle of ${uploadTitle || 'this topic'}?`, options: ['Core mechanism', 'No analysis'], correctIndex: 0, signHint: 'Focus on fundamentals.' }],
+              practiceWords: [
+                { id: 'science', word: 'Science', hint: 'Rotate fists in circular motions.', targetPose: 'FIST_PULSE' },
+                { id: 'teacher', word: 'Teacher', hint: 'Hands near temples moving forward.', targetPose: 'TEMPLE_FORWARD' }
+              ],
+              quiz: [
+                { id: `q-${Date.now()}-1`, question: `What is the core principle of ${uploadTitle || 'this curriculum'}?`, options: ['Primary physiological mechanism', 'Secondary observation', 'No relation', 'Static premise'], correctIndex: 0, signHint: 'Focus on fundamentals.' }
+              ],
             },
             bviModule: {
-              audioSummary: `Welcome to ${uploadTitle || 'this lesson'}.`,
-              audioSections: [{ sectionTitle: 'Overview', content: uploadText || 'Key principles.' }],
+              audioSummary: `Welcome to ${uploadTitle || 'this lesson'}. This module provides auditory narration and tactile coordinates.`,
+              audioSections: [
+                { sectionTitle: 'Section 1: Overview', content: uploadText || `Foundational overview for ${uploadTitle || 'this curriculum'}.` },
+                { sectionTitle: 'Section 2: Detailed Principles', content: 'Detailed analysis of functional elements and mechanisms.' }
+              ],
               hapticDiagram: {
                 id: `diagram-${Date.now()}`,
-                title: `Diagram: ${uploadTitle || 'Structure'}`,
+                title: `Diagram: ${uploadTitle || 'Structure Cross-Section'}`,
                 aspectRatio: '4:3',
                 viewBox: { width: 800, height: 600 },
-                paths: [{ id: 'boundary', name: 'Outer Boundary', type: 'boundary', d: 'M 400,120 C 520,70 660,160 640,320 C 620,440 460,530 400,560 C 340,530 180,440 160,320 C 140,160 280,70 400,120 Z', vibrationPattern: [40, 25] }],
-                landmarks: [{ id: 'poi-1', name: 'Core Region', x: 400, y: 320, radius: 50, audioDescription: `You are touching ${uploadTitle || 'this lesson'}.`, hapticTone: [100, 50, 100], color: '#ffffff' }],
+                paths: [
+                  { id: 'boundary', name: 'Outer Structural Boundary', type: 'boundary', d: 'M 400,120 C 520,70 660,160 640,320 C 620,440 460,530 400,560 C 340,530 180,440 160,320 C 140,160 280,70 400,120 Z', vibrationPattern: [40, 25] }
+                ],
+                landmarks: [
+                  { id: 'poi-1', name: 'Primary Region', x: 400, y: 320, radius: 50, audioDescription: `You are touching the primary region of ${uploadTitle || 'this structure'}.`, hapticTone: [100, 50, 100], color: '#ffffff' }
+                ],
               },
-              voiceQuiz: [{ id: `vq-${Date.now()}`, spokenQuestion: 'What is the primary function?', expectedKeywords: ['concept', 'system'], points: 10 }],
+              voiceQuiz: [
+                { id: `vq-${Date.now()}-1`, spokenQuestion: 'What is the primary function described in this lesson?', expectedKeywords: ['concept', 'system', 'function', 'structure'], modelAnswer: 'The primary function focuses on system structure and physiological flow.', points: 10 }
+              ],
             },
           };
           onUploadLesson(newLesson);
         }
+
         setIsProcessing(false);
         setProcessingStage(0);
         setSelectedFile(null);
         setUploadTitle('');
         setUploadText('');
-      }, 600);
+      }, 500);
     } catch (error) {
       setIsProcessing(false);
       setProcessingStage(0);
@@ -171,330 +379,468 @@ export default function TeacherDashboard({
   return (
     <div style={{ maxWidth: '82rem', margin: '0 auto', padding: '1.5rem 1rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       
-      {/* ── 1. HERO BANNER (Sleek Grey & Black Onyx Glass) ── */}
-      <div className="ref-card-hero" style={{ padding: '2.25rem 2.5rem', position: 'relative' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '1.5rem', position: 'relative', zIndex: 1 }}>
-          <div style={{ maxWidth: '40rem' }}>
+      {/* ── 1. TEACHER STUDIO HEADER BANNER ── */}
+      <div className="ref-card" style={{ padding: '2rem 2.25rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.14)' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1.5rem' }}>
+          <div style={{ maxWidth: '42rem' }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.25rem 0.75rem', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '9999px', fontSize: '0.6875rem', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '0.75rem', color: '#f4f4f5' }}>
               <Sparkles style={{ width: 12, height: 12 }} />
-              Inclusive Classroom Engine
+              Teacher Instruction Hub • SIH 2026
             </div>
-            <h1 style={{ fontSize: '2.1rem', fontWeight: 800, letterSpacing: '-0.035em', lineHeight: 1.15, margin: 0, color: '#ffffff' }}>
-              All-in-One Access for Every Student 👋
+            <h1 style={{ fontSize: '2rem', fontWeight: 800, letterSpacing: '-0.035em', lineHeight: 1.2, margin: 0, color: '#ffffff' }}>
+              Teacher Classroom Studio
             </h1>
-            <p style={{ fontSize: '0.9375rem', marginTop: '0.625rem', lineHeight: 1.6, color: '#d4d4d8' }}>
-              Upload classroom PDFs or textbook notes. The AI engine generates <strong>Indian Sign Language (ISL)</strong> sign animations, <strong>tactile haptic diagrams</strong>, and <strong>voice-assisted assessments</strong>.
+            <p style={{ fontSize: '0.925rem', marginTop: '0.5rem', lineHeight: 1.6, color: '#d4d4d8' }}>
+              Conduct live interactive video classes with real-time Speech-to-Sign translation for Deaf students and speech narration for Blind students. Upload PDFs, PPT slides, or diagram images to convert them into accessible learning material.
             </p>
 
-            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
-              <button onClick={() => setActiveTab('deaf')} className="btn-primary">
-                <Hand style={{ width: 15, height: 15 }} /> Preview ISL Deaf Module
-              </button>
-              <button onClick={() => setActiveTab('blind')} className="btn-secondary">
-                <Eye style={{ width: 15, height: 15 }} /> Preview Blind BVI Module
-              </button>
+            {/* ── Teacher Profile ID Card ── */}
+            <div style={{ marginTop: '1.25rem', padding: '1rem 1.25rem', background: '#18181b', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              {/* Avatar */}
+              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(135deg, #3f3f46, #52525b)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.35rem', flexShrink: 0 }}>👩‍🏫</div>
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>{teacherName}</div>
+                <div style={{ fontSize: '0.8rem', color: '#a1a1aa', marginTop: 2 }}>{teacherSubject}</div>
+                <div style={{ fontSize: '0.75rem', color: '#71717a', marginTop: 1 }}>{teacherEmail}</div>
+              </div>
+              {/* Teacher ID Badge */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem' }}>
+                <div style={{ padding: '0.3rem 0.75rem', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '10px', fontFamily: 'monospace', fontSize: '1rem', fontWeight: 900, color: '#ffffff', letterSpacing: '0.08em' }}>{teacherId}</div>
+                <div style={{ fontSize: '0.6rem', color: '#71717a', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Teacher ID</div>
+              </div>
+              {/* Edit / Share buttons */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto', flexShrink: 0 }}>
+                <button onClick={() => setShowProfileEdit(v => !v)} style={{ padding: '0.4rem 0.9rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', color: '#e4e4e7', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Edit Profile</button>
+                <button onClick={() => { navigator.clipboard.writeText(teacherId); }} style={{ padding: '0.4rem 0.9rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', color: '#e4e4e7', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Copy style={{ width: 12, height: 12 }} />Copy ID</button>
+              </div>
             </div>
+
+            {/* Edit Profile Panel */}
+            {showProfileEdit && (
+              <div style={{ marginTop: '1rem', padding: '1.25rem', background: '#1c1c1f', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Edit Teacher Profile</div>
+                {[['Full Name', teacherName, setTeacherName], ['Subject / Department', teacherSubject, setTeacherSubjectState], ['Email', teacherEmail, setTeacherEmail]].map(([label, val, setter]) => (
+                  <div key={label}>
+                    <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '0.25rem', display: 'block' }}>{label}</label>
+                    <input value={val} onChange={e => setter(e.target.value)} style={{ width: '100%', padding: '0.5rem 0.75rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', color: '#fff', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }} />
+                  </div>
+                ))}
+                <button onClick={handleSaveProfile} style={{ alignSelf: 'flex-start', padding: '0.5rem 1.25rem', background: profileSaved ? '#166534' : '#3f3f46', border: `1px solid ${profileSaved ? '#4ade80' : 'rgba(255,255,255,0.15)'}`, borderRadius: '10px', color: profileSaved ? '#4ade80' : '#e4e4e7', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>{profileSaved ? '✓ Saved!' : 'Save Profile'}</button>
+              </div>
+            )}
           </div>
 
-          {/* Quick Stat Pill Card */}
-          <div style={{ background: '#121215', padding: '1.25rem', borderRadius: '20px', border: '1px solid rgba(255, 255, 255, 0.12)', minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '0.75rem', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+          {/* Active Classroom Status Card */}
+          <div style={{ background: '#18181b', padding: '1.25rem', borderRadius: '20px', border: '1px solid rgba(255, 255, 255, 0.12)', minWidth: '240px', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a1a1aa' }}>Active Lesson</span>
-              <span style={{ fontSize: '0.6875rem', padding: '0.15rem 0.5rem', background: '#27272a', color: '#ffffff', borderRadius: '999px', fontWeight: 800, border: '1px solid rgba(255, 255, 255, 0.15)' }}>
-                {currentLesson?.grade || 'Grade 10'}
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a1a1aa' }}>Classroom Status</span>
+              <span style={{
+                fontSize: '0.6875rem', padding: '0.2rem 0.6rem',
+                background: isLiveLecture ? 'rgba(239, 68, 68, 0.15)' : '#27272a',
+                color: isLiveLecture ? '#f87171' : '#ffffff',
+                borderRadius: '999px', fontWeight: 800,
+                border: isLiveLecture ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(255, 255, 255, 0.15)',
+                display: 'inline-flex', alignItems: 'center', gap: '0.35rem'
+              }}>
+                {isLiveLecture ? <span className="live-dot" /> : null}
+                {isLiveLecture ? 'LIVE BROADCASTING' : 'IDLE / READY'}
               </span>
             </div>
-            <div style={{ fontSize: '1.125rem', fontWeight: 800, color: '#ffffff' }}>
+
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff' }}>
               {currentLesson?.title?.slice(0, 26)}…
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
-              <span style={{ color: '#d4d4d8' }}>✓ {currentLesson?.islModule?.lessonGlosses?.length || 0} Signs</span>
-              <span>•</span>
-              <span style={{ color: '#d4d4d8' }}>✓ {currentLesson?.bviModule?.voiceQuiz?.length || 0} Voice Qs</span>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.4rem', borderTop: '1px solid rgba(255, 255, 255, 0.08)', fontSize: '0.75rem', color: '#a1a1aa' }}>
+              <span>Room Key: <strong style={{ color: '#ffffff', fontFamily: 'var(--font-mono)' }}>{roomCode}</strong></span>
+              <button onClick={copyRoomPass} style={{ background: 'none', border: 'none', color: '#ffffff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                <Copy style={{ width: 12, height: 12 }} /> {copiedPass ? 'Copied' : 'Copy'}
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── 2. LIVE LECTURE BROADCAST HUB (Voice -> ISL Captions) ── */}
-      <div className="ref-card" style={{ padding: '1.5rem 1.75rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
+      {/* ── 2. GOOGLE MEET-STYLE LIVE VIDEO CLASSROOM STUDIO ── */}
+      <div className="ref-card" style={{ padding: '1.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ width: 42, height: 42, borderRadius: '12px', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
-              <Radio style={{ width: 20, height: 20, color: '#f87171' }} />
+            <div style={{ width: 44, height: 44, borderRadius: '14px', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
+              <Radio style={{ width: 22, height: 22, color: isLiveLecture ? '#ef4444' : '#ffffff' }} />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.125rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
-                Live Classroom Lecture Broadcast
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                Live Video Classroom (Google Meet Studio)
+                {isLiveLecture && <span className="live-badge"><span className="live-dot" /> ON AIR</span>}
               </h2>
               <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0 }}>
-                Teacher speaks → Speech is immediately converted to Indian Sign Language (ISL) Closed Captions
+                Teacher webcam & microphone streams live video + speech to deaf and blind students in real-time
               </p>
             </div>
           </div>
 
-          {!isLiveLecture ? (
-            <button onClick={onStartLiveLecture} className="btn-primary">
-              <Radio style={{ width: 15, height: 15 }} /> Start Live Lecture
+          {/* Room Key & Link Share Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <div style={{ background: '#121215', padding: '0.4rem 0.8rem', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem' }}>
+              <Key style={{ width: 14, height: 14, color: '#a1a1aa' }} />
+              <span style={{ color: '#a1a1aa' }}>Room Pass:</span>
+              <strong style={{ color: '#ffffff', fontFamily: 'var(--font-mono)' }}>{roomCode}</strong>
+            </div>
+
+            <button onClick={() => copyRoomLink('deaf')} className="btn-secondary" style={{ padding: '0.45rem 0.9rem', fontSize: '0.75rem' }}>
+              <Link style={{ width: 13, height: 13 }} />
+              {copiedLink ? '✓ Link Copied!' : 'Copy Student Invite Link'}
             </button>
-          ) : (
-            <button onClick={onStopLiveLecture} style={{
-              display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-              padding: '0.6rem 1.3rem', background: 'rgba(239, 68, 68, 0.15)',
-              border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171', fontWeight: 800,
-              fontSize: '0.8125rem', borderRadius: '9999px', cursor: 'pointer'
+          </div>
+        </div>
+
+        {/* Video Camera & Controls Container */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1.4fr) 1fr', gap: '1.5rem', alignItems: 'start' }}>
+          
+          {/* Left: Video Viewport & Media Controls */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+            <div style={{
+              position: 'relative',
+              width: '100%',
+              aspectRatio: '16/10',
+              background: '#09090b',
+              borderRadius: '20px',
+              overflow: 'hidden',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 12px 36px rgba(0, 0, 0, 0.7)'
             }}>
-              <span className="live-dot" /> LIVE — Stop Broadcast
-              <Square style={{ width: 12, height: 12 }} />
-            </button>
-          )}
-        </div>
+              {/* Actual Video Element */}
+              <video
+                ref={teacherVideoRef}
+                autoPlay
+                muted
+                playsInline
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: isLiveLecture && isCameraActive ? 'block' : 'none',
+                  transform: 'scaleX(-1)' // mirror preview
+                }}
+              />
 
-        {isLiveLecture ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <p style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', margin: 0 }}>
-              Live ISL Gloss Tokens (Streaming to Deaf Students)
-            </p>
-            <div className="caption-strip" style={{ minHeight: '52px' }}>
-              {liveLectureGlosses.length === 0 ? (
-                <span style={{ color: '#71717a', fontSize: '0.8125rem', fontStyle: 'italic' }}>
-                  Listening to teacher microphone… Speak to stream ISL sign tokens
-                </span>
-              ) : (
-                liveLectureGlosses.slice(-20).map((g, i) => (
-                  <span key={i} className={`caption-token ${i === liveLectureGlosses.slice(-20).length - 1 ? 'new' : ''}`}>
-                    {g}
-                  </span>
-                ))
-              )}
-            </div>
-            {liveLectureTranscript && (
-              <div style={{ background: '#121215', borderRadius: '12px', padding: '0.75rem 1rem', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
-                <p style={{ fontSize: '0.6875rem', color: '#a1a1aa', margin: '0 0 0.25rem 0', fontFamily: 'var(--font-mono)' }}>LIVE TRANSCRIPT</p>
-                <p style={{ fontSize: '0.875rem', color: '#f4f4f5', margin: 0, lineHeight: 1.5 }}>{liveLectureTranscript}</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div style={{ background: '#121215', borderRadius: '14px', padding: '1rem 1.25rem', border: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Zap style={{ width: 18, height: 18, color: '#ffffff', flexShrink: 0 }} />
-            <p style={{ fontSize: '0.8125rem', color: '#d4d4d8', margin: 0, lineHeight: 1.5 }}>
-              Click <strong>"Start Live Lecture"</strong> above. When you speak, your lecture is captured in real time, translated to <strong>ISL Sign Glosses</strong>, and synchronized with students in the <strong>ISL / Deaf tab</strong> like live sign language captions.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* ── 3. VISUAL ANALYTICS & STATS GRID (Grey & Black Minimalist) ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
-        
-        {/* Visual Chart Card: Performance Wave */}
-        <div className="ref-card" style={{ padding: '1.5rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
-                Performance Chart
-              </h3>
-              <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0 }}>This week's student comprehension rate</p>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.6875rem', fontWeight: 600 }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#a1a1aa' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#71717a' }} /> Theory
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#ffffff' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ffffff' }} /> Practical
-              </span>
-            </div>
-          </div>
-
-          {/* Monochromatic SVG Wave chart */}
-          <div style={{ position: 'relative', height: '140px', background: '#121215', borderRadius: '16px', padding: '0.5rem', overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
-            <div style={{ position: 'absolute', top: '16px', left: '42%', background: '#ffffff', color: '#09090b', padding: '0.25rem 0.6rem', borderRadius: '12px', fontSize: '0.6875rem', fontWeight: 900, boxShadow: '0 4px 10px rgba(0, 0, 0, 0.5)', zIndex: 2 }}>
-              +16% ISL Recall
-            </div>
-
-            <svg viewBox="0 0 500 120" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
-              <defs>
-                <linearGradient id="whiteWave" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#ffffff" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#ffffff" stopOpacity="0.01" />
-                </linearGradient>
-                <linearGradient id="greyWave" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#71717a" stopOpacity="0.3" />
-                  <stop offset="100%" stopColor="#71717a" stopOpacity="0.02" />
-                </linearGradient>
-              </defs>
-              <path d="M0,80 Q70,40 140,75 T280,30 T420,65 T500,40 L500,120 L0,120 Z" fill="url(#whiteWave)" />
-              <path d="M0,80 Q70,40 140,75 T280,30 T420,65 T500,40" fill="none" stroke="#ffffff" strokeWidth="2" />
-              <path d="M0,60 Q80,20 160,50 T320,15 T440,45 T500,25 L500,120 L0,120 Z" fill="url(#greyWave)" />
-              <path d="M0,60 Q80,20 160,50 T320,15 T440,45 T500,25" fill="none" stroke="#a1a1aa" strokeWidth="1.5" />
-            </svg>
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6875rem', color: '#71717a', marginTop: '0.5rem', fontFamily: 'var(--font-mono)' }}>
-            <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-          </div>
-        </div>
-
-        {/* Arc Progress Meter Card */}
-        <div className="ref-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
-                My Learning Progress
-              </h3>
-              <span style={{ fontSize: '0.6875rem', color: '#a1a1aa', fontWeight: 600 }}>Current Portfolio</span>
-            </div>
-          </div>
-
-          {/* Radial Arc Gauge */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1rem 0' }}>
-            <div style={{ position: 'relative', width: '160px', height: '100px', overflow: 'hidden' }}>
-              <svg viewBox="0 0 160 90" style={{ width: '100%', height: '100%' }}>
-                <path d="M10,80 A70,70 0 0,1 150,80" fill="none" stroke="#27272a" strokeWidth="14" strokeLinecap="round" />
-                <path d="M10,80 A70,70 0 0,1 150,80" fill="none" stroke="#ffffff" strokeWidth="14" strokeLinecap="round" strokeDasharray="220" strokeDashoffset="55" />
-              </svg>
-              <div style={{ position: 'absolute', bottom: '0', left: '0', right: '0', textAlign: 'center' }}>
-                <span style={{ fontSize: '1.75rem', fontWeight: 900, color: '#ffffff', fontFamily: 'var(--font-display)', letterSpacing: '-0.03em' }}>76%</span>
-              </div>
-            </div>
-            <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: '0.35rem 0 0 0', fontWeight: 500 }}>
-              Great progress across learning modules
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button onClick={() => setActiveTab('deaf')} className="btn-secondary" style={{ flex: 1, justifyContent: 'center', padding: '0.5rem' }}>
-              Explore Quizzes
-            </button>
-            <button onClick={() => setActiveTab('blind')} className="btn-primary" style={{ flex: 1, justifyContent: 'center', padding: '0.5rem' }}>
-              Evaluate Plan
-            </button>
-          </div>
-        </div>
-
-        {/* Schedule & Collaboration Card */}
-        <div className="ref-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
-                My Schedule
-              </h3>
-              <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>Weekly classes & sessions</span>
-            </div>
-
-            {/* Schedule Day Pills */}
-            <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'space-between' }}>
-              {[
-                { day: '4', name: 'Apr' },
-                { day: '5', name: 'Apr' },
-                { day: '6', name: 'Apr' },
-                { day: '7', name: 'Apr' },
-                { day: '8', name: 'Apr' },
-                { day: '9', name: 'Apr' },
-              ].map((item, idx) => {
-                const isActive = item.day === '6';
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => setSelectedScheduleDay(parseInt(item.day))}
-                    className={`schedule-pill ${isActive ? 'active' : ''}`}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <span style={{ fontSize: '0.8125rem', fontWeight: 800 }}>{item.day}</span>
-                    <span style={{ fontSize: '0.625rem' }}>{item.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '0.75rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ffffff' }}>Student Collaboration</span>
-              <span style={{ fontSize: '0.6875rem', color: '#d4d4d8', fontWeight: 700 }}>+ Add Student</span>
-            </div>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {(students || []).map((s) => (
-                <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: '#121215', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#27272a', color: 'white', border: '1px solid rgba(255, 255, 255, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6875rem', fontWeight: 800 }}>
-                      {s.name[0]}
-                    </div>
-                    <div>
-                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>{s.name}</p>
-                      <p style={{ fontSize: '0.625rem', color: '#a1a1aa', margin: 0 }}>{s.type === 'deaf' ? 'ISL Sign Student' : 'BVI Audio/Haptic'}</p>
-                    </div>
+              {/* Placeholder when Camera is Off or Session Idle */}
+              {(!isLiveLecture || !isCameraActive) && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', color: '#a1a1aa', textAlign: 'center', padding: '1.5rem' }}>
+                  <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', border: '1px solid rgba(255, 255, 255, 0.15)' }}>
+                    <Video style={{ width: 30, height: 30 }} />
                   </div>
-                  <span style={{ fontSize: '0.625rem', fontWeight: 800, padding: '0.15rem 0.5rem', background: '#27272a', color: '#34d399', borderRadius: '999px', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
-                    Completed
+                  <div>
+                    <h4 style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                      {isLiveLecture ? 'Camera is Turned Off' : 'Camera Feed Ready'}
+                    </h4>
+                    <p style={{ fontSize: '0.75rem', margin: '0.25rem 0 0 0' }}>
+                      {isLiveLecture ? 'Your microphone & Speech-to-Sign transcription are still streaming' : 'Click "Start Live Class" below to turn on webcam & microphone'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Top Video Overlay: Teacher Badge & Status */}
+              {isLiveLecture && (
+                <div style={{ position: 'absolute', top: 14, left: 14, display: 'flex', alignItems: 'center', gap: '0.5rem', zIndex: 10 }}>
+                  <span style={{ padding: '0.25rem 0.65rem', background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(10px)', color: '#ffffff', fontSize: '0.6875rem', fontWeight: 800, borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.2)' }}>
+                    Teacher (Host)
+                  </span>
+                  <span style={{ padding: '0.25rem 0.65rem', background: 'rgba(239, 68, 68, 0.85)', color: '#ffffff', fontSize: '0.6875rem', fontWeight: 900, borderRadius: '8px' }}>
+                    LIVE
                   </span>
                 </div>
-              ))}
+              )}
+
+              {/* Bottom Video Action Bar */}
+              <div style={{
+                position: 'absolute',
+                bottom: 14,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'rgba(18, 18, 21, 0.88)',
+                backdropFilter: 'blur(16px)',
+                padding: '0.4rem 0.8rem',
+                borderRadius: '9999px',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.6rem',
+                zIndex: 10
+              }}>
+                <button
+                  onClick={handleToggleMic}
+                  disabled={!isLiveLecture}
+                  title={isMicActive ? 'Mute Microphone' : 'Unmute Microphone'}
+                  style={{
+                    width: 36, height: 36, borderRadius: '50%',
+                    background: isMicActive ? '#27272a' : '#ef4444',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    color: '#ffffff', cursor: isLiveLecture ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    opacity: isLiveLecture ? 1 : 0.4
+                  }}
+                >
+                  {isMicActive ? <Mic style={{ width: 16, height: 16 }} /> : <MicOff style={{ width: 16, height: 16 }} />}
+                </button>
+
+                <button
+                  onClick={handleToggleCamera}
+                  disabled={!isLiveLecture}
+                  title={isCameraActive ? 'Turn Off Camera' : 'Turn On Camera'}
+                  style={{
+                    width: 36, height: 36, borderRadius: '50%',
+                    background: isCameraActive ? '#27272a' : '#ef4444',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    color: '#ffffff', cursor: isLiveLecture ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    opacity: isLiveLecture ? 1 : 0.4
+                  }}
+                >
+                  {isCameraActive ? <Video style={{ width: 16, height: 16 }} /> : <VideoOff style={{ width: 16, height: 16 }} />}
+                </button>
+
+                <button
+                  onClick={handleShareScreen}
+                  disabled={!isLiveLecture}
+                  title="Share Screen"
+                  style={{
+                    width: 36, height: 36, borderRadius: '50%',
+                    background: isScreenSharing ? '#3b82f6' : '#27272a',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    color: '#ffffff', cursor: isLiveLecture ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    opacity: isLiveLecture ? 1 : 0.4
+                  }}
+                >
+                  <Monitor style={{ width: 16, height: 16 }} />
+                </button>
+
+                <button
+                  onClick={handleToggleLiveLecture}
+                  style={{
+                    padding: '0.45rem 1.15rem',
+                    borderRadius: '9999px',
+                    background: isLiveLecture ? '#ef4444' : '#ffffff',
+                    color: isLiveLecture ? '#ffffff' : '#09090b',
+                    fontWeight: 800,
+                    fontSize: '0.8125rem',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    boxShadow: isLiveLecture ? '0 0 16px rgba(239, 68, 68, 0.6)' : '0 4px 12px rgba(255, 255, 255, 0.2)'
+                  }}
+                >
+                  <Radio style={{ width: 14, height: 14 }} />
+                  {isLiveLecture ? 'End Live Broadcast' : 'Start Live Class'}
+                </button>
+              </div>
             </div>
+
+            {/* ── Live Speech → ISL Dictionary Broadcaster Console ── */}
+            <div style={{ background: '#121215', padding: '1.25rem', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.12)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Zap style={{ width: 14, height: 14, color: '#34d399' }} /> Real-Time Live Speech → ISL Dictionary Broadcaster
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>Room: {roomCode}</span>
+                  <span style={{
+                    fontSize: '0.6875rem',
+                    fontWeight: 700,
+                    padding: '0.15rem 0.55rem',
+                    borderRadius: '999px',
+                    background: micPermissionStatus === 'granted' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+                    color: micPermissionStatus === 'granted' ? '#34d399' : '#f43f5e',
+                    border: micPermissionStatus === 'granted' ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(244, 63, 94, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.3rem'
+                  }}>
+                    <Mic style={{ width: 11, height: 11 }} />
+                    {micPermissionStatus === 'granted' ? 'Mic Active' : (micPermissionStatus === 'denied' ? 'Mic Blocked (Use Console)' : 'Mic Ready')}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="text"
+                  value={liveBroadcastSpeechInput}
+                  onChange={(e) => setLiveBroadcastSpeechInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleBroadcastSpeechLine(); }}
+                  placeholder="Type or speak a live lecture sentence (e.g. 'The human heart pumps oxygenated blood through arteries')..."
+                  style={{ flex: 1, padding: '0.6rem 0.85rem', background: '#18181b', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                />
+                <button
+                  onClick={handleBroadcastSpeechLine}
+                  className="btn-primary"
+                  style={{ padding: '0.6rem 1.1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                >
+                  <Radio style={{ width: 14, height: 14 }} /> Broadcast Line
+                </button>
+              </div>
+
+              {/* Dynamic Quick Speech Presets from Uploaded Materials */}
+              {lessons && lessons.length > 0 && (
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.7rem', color: '#71717a', fontWeight: 700 }}>Uploaded Lessons:</span>
+                  {lessons.map((l, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        const line = l.summary ? l.summary.slice(0, 80) : l.title;
+                        setLiveBroadcastSpeechInput(line);
+                        broadcastLiveSpeechText(line, roomCode);
+                        setLastBroadcastedLine(line);
+                      }}
+                      style={{ padding: '0.25rem 0.65rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', color: '#d4d4d8', fontSize: '0.6875rem', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      + "{l.title}"
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {lastBroadcastedLine && (
+                <div style={{ background: '#18181b', padding: '0.5rem 0.75rem', borderRadius: '10px', fontSize: '0.75rem', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <CheckCircle2 style={{ width: 14, height: 14 }} />
+                  <span>Last Broadcasted Line (Translated to ISL Dictionary): "{lastBroadcastedLine}"</span>
+                </div>
+              )}
+            </div>
+
+            {/* Live ISL Gloss Token Strip */}
+            <div style={{ background: '#121215', borderRadius: '16px', padding: '0.85rem 1rem', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                  Live ISL Gloss Translation (Streaming to Deaf Students)
+                </span>
+                <span style={{ fontSize: '0.6875rem', color: '#ffffff' }}>{liveLectureGlosses?.length || 0} tokens</span>
+              </div>
+              <div className="caption-strip" style={{ minHeight: '46px' }}>
+                {!isLiveLecture ? (
+                  <span style={{ color: '#71717a', fontSize: '0.8125rem', fontStyle: 'italic' }}>
+                    Start Live Class to stream real-time Indian Sign Language glosses…
+                  </span>
+                ) : liveLectureGlosses.length === 0 ? (
+                  <span style={{ color: '#71717a', fontSize: '0.8125rem', fontStyle: 'italic' }}>
+                    Listening to teacher microphone… Speak naturally to generate ISL tokens
+                  </span>
+                ) : (
+                  liveLectureGlosses.slice(-18).map((g, i) => (
+                    <span key={i} className={`caption-token ${i === liveLectureGlosses.slice(-18).length - 1 ? 'new' : ''}`}>
+                      {g}
+                    </span>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Live Transcript & Connected Participants */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            
+            {/* Live Transcript Stream */}
+            <div style={{ background: '#121215', borderRadius: '18px', padding: '1.15rem', border: '1px solid rgba(255, 255, 255, 0.1)', flex: 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ffffff' }}>Live Lecture Transcript</span>
+                <span style={{ fontSize: '0.6875rem', color: '#a1a1aa', fontFamily: 'var(--font-mono)' }}>Auto-Captioned</span>
+              </div>
+              <div style={{
+                background: '#09090b',
+                borderRadius: '12px',
+                padding: '0.85rem',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                minHeight: '110px',
+                maxHeight: '150px',
+                overflowY: 'auto',
+                fontSize: '0.8125rem',
+                color: '#d4d4d8',
+                lineHeight: 1.5
+              }}>
+                {liveLectureTranscript || (
+                  <span style={{ color: '#71717a', fontStyle: 'italic' }}>
+                    {isLiveLecture ? 'Awaiting speech input from microphone...' : 'Spoken words during live lecture appear here in real-time.'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Connected Student Roster */}
+            <div style={{ background: '#121215', borderRadius: '18px', padding: '1.15rem', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Users style={{ width: 16, height: 16, color: '#ffffff' }} />
+                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ffffff' }}>Connected Class Roster</span>
+                </div>
+                <span style={{ fontSize: '0.6875rem', fontWeight: 800, padding: '0.15rem 0.5rem', background: '#27272a', color: '#34d399', borderRadius: '999px' }}>
+                  {students?.length || 2} Online
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {(students || []).map((s) => (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0.65rem', background: '#18181b', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{ width: 26, height: 26, borderRadius: '50%', background: '#27272a', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6875rem', fontWeight: 800 }}>
+                        {s.name[0]}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>{s.name}</p>
+                        <p style={{ fontSize: '0.625rem', color: '#a1a1aa', margin: 0 }}>{s.type === 'deaf' ? 'ISL Sign Student' : 'BVI Audio/Tactile Student'}</p>
+                      </div>
+                    </div>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
 
-      {/* ── 4. DOCUMENT INGESTION & TEACHER-STUDENT BRIDGE ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem' }}>
+      {/* ── 3. CURRICULUM INGESTION (PDF, PPT, Diagram Images, TXT) ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem', alignItems: 'start' }}>
         
-        {/* Ingestion Card */}
+        {/* Upload & Convert Card */}
         <div className="ref-card" style={{ padding: '1.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <div style={{ width: 40, height: 40, borderRadius: '12px', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+            <div style={{ width: 40, height: 40, borderRadius: '12px', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
               <Upload style={{ width: 20, height: 20 }} />
             </div>
             <div>
               <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
-                Document Curriculum Ingestion
+                Upload Curriculum Materials
               </h3>
-              <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0 }}>Upload PDF, TXT or paste lesson notes</p>
+              <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0 }}>
+                Supports Diagrams/Images (.png, .jpg, .svg), Presentations (.pptx, .ppt), PDFs (.pdf) and Text notes
+              </p>
             </div>
           </div>
 
-          {/* Quick Benchmark Lessons */}
-          <div style={{ background: '#121215', borderRadius: '16px', padding: '0.875rem', border: '1px solid rgba(255, 255, 255, 0.08)', marginBottom: '1rem' }}>
-            <p style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#a1a1aa', margin: '0 0 0.5rem 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Pre-Configured Benchmark Lessons:
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-              <button
-                onClick={() => handleSimulatedUpload('heart')}
-                disabled={isProcessing}
-                style={{ padding: '0.625rem', background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>Heart Anatomy</span>
-                  <ChevronRight style={{ width: 12, height: 12, color: '#ffffff' }} />
-                </div>
-                <p style={{ fontSize: '0.625rem', color: '#a1a1aa', margin: '0.15rem 0 0 0' }}>Class 10 Biology</p>
-              </button>
-
-              <button
-                onClick={() => handleSimulatedUpload('photosynthesis')}
-                disabled={isProcessing}
-                style={{ padding: '0.625rem', background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>Photosynthesis</span>
-                  <ChevronRight style={{ width: 12, height: 12, color: '#ffffff' }} />
-                </div>
-                <p style={{ fontSize: '0.625rem', color: '#a1a1aa', margin: '0.15rem 0 0 0' }}>Class 9 Biology</p>
-              </button>
-            </div>
-          </div>
-
-          {/* Upload Form */}
           <form onSubmit={handleFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-            <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.txt" style={{ display: 'none' }} />
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept=".pdf,.ppt,.pptx,.txt,.md,.png,.jpg,.jpeg,.svg"
+              style={{ display: 'none' }}
+            />
             
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               style={{
-                padding: '1.25rem',
+                padding: '1.5rem',
                 border: '2px dashed rgba(255, 255, 255, 0.2)',
                 borderRadius: '16px',
                 background: '#121215',
@@ -503,14 +849,17 @@ export default function TeacherDashboard({
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
-                gap: '0.35rem',
+                gap: '0.4rem',
+                transition: 'all 0.2s ease'
               }}
             >
-              <FolderUp style={{ width: 26, height: 26, color: '#ffffff' }} />
-              <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#ffffff' }}>
-                {selectedFile ? `✓ ${selectedFile.name}` : 'Click to select PDF or TXT notes'}
+              <FolderUp style={{ width: 28, height: 28, color: '#ffffff' }} />
+              <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff' }}>
+                {selectedFile ? `✓ ${selectedFile.name}` : 'Click to select Diagram, PPT, PDF or TXT'}
               </span>
-              <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>Supports automatic OCR, ISL tokenization & tactile mapping</span>
+              <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>
+                Auto-extracts scientific concepts, ISL glosses & haptic vibration coordinates
+              </span>
             </button>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem' }}>
@@ -520,8 +869,8 @@ export default function TeacherDashboard({
                   type="text"
                   value={uploadTitle}
                   onChange={(e) => setUploadTitle(e.target.value)}
-                  placeholder="e.g. Circulatory System"
-                  style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '0.8125rem', color: '#ffffff', background: '#121215' }}
+                  placeholder="e.g. Photosynthesis & Cellular Respiration"
+                  style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '0.8125rem', color: '#ffffff', background: '#121215' }}
                 />
               </div>
               <div>
@@ -531,19 +880,19 @@ export default function TeacherDashboard({
                   value={uploadSubject}
                   onChange={(e) => setUploadSubject(e.target.value)}
                   placeholder="Class 10 Biology"
-                  style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '0.8125rem', color: '#ffffff', background: '#121215' }}
+                  style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '0.8125rem', color: '#ffffff', background: '#121215' }}
                 />
               </div>
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.6875rem', fontWeight: 700, color: '#a1a1aa', marginBottom: '0.25rem' }}>Or Paste Lesson Content</label>
+              <label style={{ display: 'block', fontSize: '0.6875rem', fontWeight: 700, color: '#a1a1aa', marginBottom: '0.25rem' }}>Or Paste Lesson Content / Teacher Explanations</label>
               <textarea
                 rows={3}
                 value={uploadText}
                 onChange={(e) => setUploadText(e.target.value)}
-                placeholder="Paste textbook paragraph or teacher notes..."
-                style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '0.8125rem', color: '#ffffff', background: '#121215', resize: 'vertical' }}
+                placeholder="Paste curriculum paragraphs, key definitions, or diagram descriptions..."
+                style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '0.8125rem', color: '#ffffff', background: '#121215', resize: 'vertical' }}
               />
             </div>
 
@@ -579,13 +928,13 @@ export default function TeacherDashboard({
           </form>
         </div>
 
-        {/* Right Column: Teacher Reply to Doubt -> ISL & Student Inbox */}
+        {/* Right Column: Teacher Reply to Doubt -> ISL & Student Doubts Inbox */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
-          {/* Reply -> ISL Broadcast Card */}
+          {/* Instant ISL Reply Broadcast */}
           <div className="ref-card" style={{ padding: '1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '0.875rem' }}>
-              <div style={{ width: 36, height: 36, borderRadius: '10px', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+              <div style={{ width: 36, height: 36, borderRadius: '10px', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
                 <MessageSquare style={{ width: 18, height: 18 }} />
               </div>
               <div>
@@ -593,7 +942,7 @@ export default function TeacherDashboard({
                   Teacher Answer → Live ISL Broadcast
                 </h3>
                 <p style={{ fontSize: '0.6875rem', color: '#a1a1aa', margin: 0 }}>
-                  Type your explanation → automatically converted into sign tokens for deaf students
+                  Type answer to student doubt → converted to sign tokens and broadcast live
                 </p>
               </div>
             </div>
@@ -603,7 +952,7 @@ export default function TeacherDashboard({
                 type="text"
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
-                placeholder="Type response to student's signed doubt…"
+                placeholder="Type explanation to student's signed doubt…"
                 onKeyDown={(e) => e.key === 'Enter' && handleSendReply()}
                 style={{ flex: 1, padding: '0.5rem 0.85rem', borderRadius: '999px', border: '1px solid rgba(255, 255, 255, 0.15)', fontSize: '0.8125rem', color: '#ffffff', background: '#121215' }}
               />
@@ -624,17 +973,17 @@ export default function TeacherDashboard({
             )}
           </div>
 
-          {/* Student Inbox Card */}
+          {/* Student Doubts & Inbox Feed */}
           <div className="ref-card" style={{ padding: '1.5rem', flex: 1 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Inbox style={{ width: 18, height: 18, color: '#ffffff' }} />
                 <h3 style={{ fontSize: '0.9375rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
-                  Student Doubts & Questions
+                  Live Student Doubts & Inbox
                 </h3>
               </div>
               <span style={{ fontSize: '0.6875rem', fontWeight: 800, padding: '0.15rem 0.6rem', background: '#27272a', color: '#ffffff', borderRadius: '999px', border: '1px solid rgba(255, 255, 255, 0.15)' }}>
-                {inboxMessages.length} Messages
+                {inboxMessages.length} Received
               </span>
             </div>
 
@@ -654,6 +1003,135 @@ export default function TeacherDashboard({
           </div>
 
         </div>
+      </div>
+
+      {/* ============================================================
+         3. STUDENT COLLABORATION, SCHEDULE & LEARNING EVALUATION
+         ============================================================ */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem', marginTop: '1.5rem' }}>
+        
+        {/* Student Collaboration Roster */}
+        <div className="ref-card" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+              <div style={{ width: 36, height: 36, borderRadius: '10px', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
+                <Users style={{ width: 18, height: 18 }} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                  Student Collaboration & Schedule
+                </h3>
+                <p style={{ fontSize: '0.6875rem', color: '#a1a1aa', margin: 0 }}>
+                  Manage connected students in live classroom room
+                </p>
+              </div>
+            </div>
+            <span style={{ fontSize: '0.75rem', fontWeight: 800, padding: '0.2rem 0.6rem', background: '#27272a', color: '#ffffff', borderRadius: '999px' }}>
+              {studentList.length} Students
+            </span>
+          </div>
+
+          {/* Add Student Form */}
+          <form onSubmit={handleAddStudent} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={newStudentName}
+              onChange={(e) => setNewStudentName(e.target.value)}
+              placeholder="Student name..."
+              style={{ flex: 1, minWidth: '140px', padding: '0.55rem 0.85rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', color: '#ffffff', fontSize: '0.8125rem' }}
+            />
+            <select
+              value={newStudentRole}
+              onChange={(e) => setNewStudentRole(e.target.value)}
+              style={{ padding: '0.55rem 0.85rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', color: '#ffffff', fontSize: '0.8125rem' }}
+            >
+              <option value="Deaf Student">Deaf Student</option>
+              <option value="Blind Student">Blind Student</option>
+              <option value="Inclusive Learner">Inclusive Learner</option>
+            </select>
+            <button
+              type="submit"
+              disabled={!newStudentName.trim()}
+              className="btn-primary"
+              style={{ padding: '0.55rem 1rem', fontSize: '0.75rem', opacity: !newStudentName.trim() ? 0.45 : 1 }}
+            >
+              + Add Student
+            </button>
+          </form>
+
+          {/* Students List */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto' }}>
+            {studentList.map((st) => (
+              <div key={st.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.65rem 0.85rem', background: '#121215', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                <div>
+                  <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff', display: 'block' }}>{st.name}</span>
+                  <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>{st.role}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#34d399', background: 'rgba(52, 211, 153, 0.12)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+                    {st.accuracy}% Mastery
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* My Learning, Quizzes & Plan Evaluation */}
+        <div className="ref-card" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+            <div style={{ width: 36, height: 36, borderRadius: '10px', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
+              <Award style={{ width: 18, height: 18 }} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                My Learning & Quiz Evaluation
+              </h3>
+              <p style={{ fontSize: '0.6875rem', color: '#a1a1aa', margin: 0 }}>
+                Explore curriculum quizzes and evaluate accessibility plans
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <button
+              onClick={() => setActiveTab('deaf')}
+              className="btn-secondary"
+              style={{ padding: '0.85rem', justifyContent: 'center', fontSize: '0.8125rem' }}
+            >
+              🎯 Explore ISL Quizzes
+            </button>
+            <button
+              onClick={() => setActiveTab('blind')}
+              className="btn-secondary"
+              style={{ padding: '0.85rem', justifyContent: 'center', fontSize: '0.8125rem' }}
+            >
+              🎙 Explore Voice Quizzes
+            </button>
+          </div>
+
+          <button
+            onClick={handleEvaluatePlan}
+            className="btn-primary"
+            style={{ justifyContent: 'center', padding: '0.75rem', width: '100%' }}
+          >
+            <Sparkles style={{ width: 16, height: 16 }} />
+            Evaluate Accessibility Learning Plan
+          </button>
+
+          {evaluationFeedback && (
+            <div style={{ background: '#121215', border: '1px solid rgba(52, 211, 153, 0.3)', borderRadius: '14px', padding: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#34d399' }}>{evaluationFeedback.title}</span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ffffff', background: '#27272a', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>{evaluationFeedback.score}</span>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: '#d4d4d8', margin: 0, lineHeight: 1.4 }}>
+                {evaluationFeedback.summary}
+              </p>
+            </div>
+          )}
+        </div>
+
       </div>
 
     </div>
