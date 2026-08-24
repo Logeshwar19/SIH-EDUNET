@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ISL_Recording_Sequence_Schema",
+  "description": "Schema for recording and annotating Indian Sign Language landmark sequence samples with person-aware metadata to prevent data leakage.",
+  "type": "object",
+  "required": ["sessionId", "signerId", "signId", "signLabel", "type", "sampleRateFps", "frames"],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Unique recording session identifier (e.g. 'sess-delhi-01')"
+    },
+    "signerId": {
+      "type": "string",
+      "description": "Anonymized signer identifier used for person-aware train/val/test splitting (e.g. 'signer-04')"
+    },
+    "signId": {
+      "type": "string",
+      "enum": ["heart", "pump", "science", "plant", "teacher", "student"],
+      "description": "Curriculum vocabulary target sign identifier"
+    },
+    "signLabel": {
+      "type": "string",
+      "description": "Human-readable sign label"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["static", "dynamic"]
+    },
+    "sampleRateFps": {
+      "type": "integer",
+      "default": 30
+    },
+    "frames": {
+      "type": "array",
+      "minItems": 30,
+      "maxItems": 30,
+      "description": "Sequence of 30 normalized 42-landmark frames (x, y, z per hand)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "frameIndex": { "type": "integer" },
+          "timestampMs": { "type": "number" },
+          "handsCount": { "type": "integer", "enum": [0, 1, 2] },
+          "leftHand": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+                "z": { "type": "number" }
+              }
+            }
+          },
+          "rightHand": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+                "z": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

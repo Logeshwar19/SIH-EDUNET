@@ -300,3 +300,31 @@ Backend & Persistence:
 |  - Roster management                  - Lesson catalog & accessibility previews   |
 +-----------------------------------------------------------------------------------+
 ```
+
+---
+
+## ⚠️ Known Limitations (Prototype Scope)
+
+For transparent evaluation during hackathon demonstrations, the following prototype trade-offs and design boundaries are documented:
+
+1. **MediaPipe Gesture Evaluation (Heuristic Fallback):**
+   * Gesture evaluation computes real-time 3D landmark cosine similarity when webcam landmarks are actively extracted.
+   * On uncalibrated camera streams or HTTP demo environments where camera API permissions are restricted, the evaluation gracefully falls back to a frame-count stability heuristic to prevent demo crashes.
+   * *Production Upgrade:* Custom GRU/Transformer trained on ISL benchmarks (WLASL/INCLUDE) with local ONNX WebAssembly inference.
+
+2. **Voice Quiz Evaluation (Keyword Matching Mode):**
+   * Voice responses are assessed via extracted educational keyword matching against expected concept keywords.
+   * *Production Upgrade:* Lightweight sentence-transformers (`all-MiniLM-L6-v2`) computing cosine similarity against model answers.
+
+3. **Pre-calibrated Haptic Diagrams:**
+   * Includes 2 high-fidelity tactile SVG coordinate diagrams (*The Human Heart* and *Plant Cell & Photosynthesis*).
+   * *Production Upgrade:* Automated SVG boundary path and landmark extraction pipeline for arbitrary uploaded diagrams.
+
+4. **Persistence & Database:**
+   * Uses an in-memory database store with pre-seeded demo state (persists across sessions during uptime; resets on server restart).
+   * *Production Upgrade:* PostgreSQL + Prisma ORM with relational progress and multi-tenant classroom rosters.
+
+5. **Authentication & Identity:**
+   * Uses lightweight demo authentication middleware validating `X-Student-Id` headers across authenticated student endpoints (`student-rohan`, `student-ananya`).
+   * *Production Upgrade:* JWT / OAuth2 role-based access control (Teacher, Student, Administrator).
+

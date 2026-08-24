@@ -1,0 +1,62 @@
+{
+  "classes": [
+    "pump",
+    "science",
+    "student",
+    "unknown"
+  ],
+  "metrics": {
+    "overall_accuracy": 100.0,
+    "precision": {
+      "pump": 100.0,
+      "science": 100.0,
+      "student": 100.0,
+      "unknown": 100.0
+    },
+    "recall": {
+      "pump": 100.0,
+      "science": 100.0,
+      "student": 100.0,
+      "unknown": 100.0
+    },
+    "f1": {
+      "pump": 100.0,
+      "science": 100.0,
+      "student": 100.0,
+      "unknown": 100.0
+    },
+    "confusion_matrix": [
+      [
+        48,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        48,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        48,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        48
+      ]
+    ],
+    "unknown_rejection_rate": 100.0
+  },
+  "performance": {
+    "model_size_kb": 54.5,
+    "mean_latency_ms": 9.83,
+    "p95_latency_ms": 13.17
+  },
+  "timestamp": "2026-08-21 16:00:35"
+}

@@ -6,7 +6,10 @@ async function runVerification() {
   try {
     const res1 = await fetch('http://localhost:5000/api/blind/quiz/evaluate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Student-Id': 'student-ananya'
+      },
       body: JSON.stringify({
         lessonId: 'lesson-heart-anatomy',
         questionId: 'vq-1',
@@ -23,7 +26,10 @@ async function runVerification() {
   try {
     const res2 = await fetch('http://localhost:5000/api/blind/quiz/evaluate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Student-Id': 'student-ananya'
+      },
       body: JSON.stringify({
         lessonId: 'lesson-heart-anatomy',
         questionId: 'vq-1',
@@ -40,7 +46,10 @@ async function runVerification() {
   try {
     const res3 = await fetch('http://localhost:5000/api/blind/quiz/evaluate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Student-Id': 'student-ananya'
+      },
       body: JSON.stringify({
         lessonId: 'lesson-heart-anatomy',
         questionId: 'unknown-question-999',
@@ -56,9 +65,11 @@ async function runVerification() {
   try {
     const res4 = await fetch('http://localhost:5000/api/deaf/practice/evaluate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Student-Id': 'student-rohan'
+      },
       body: JSON.stringify({
-        studentId: 'student-rohan',
         signWord: 'Heart',
         landmarkSequence: []
       })
@@ -80,9 +91,11 @@ async function runVerification() {
 
     const res5 = await fetch('http://localhost:5000/api/deaf/practice/evaluate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Student-Id': 'student-rohan'
+      },
       body: JSON.stringify({
-        studentId: 'student-rohan',
         signWord: 'Heart',
         landmarkSequence: [sampleFrame, sampleFrame]
       })
