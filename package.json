@@ -1,0 +1,15 @@
+{
+  "name": "inclusive-ai-sih",
+  "version": "1.0.0",
+  "description": "InclusiveAI: AI-Powered Inclusive Education Platform (Upload Once -> Learn Without Barriers)",
+  "type": "module",
+  "scripts": {
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd server && node index.js",
+    "build": "cd client && npm run build",
+    "start": "cd server && node index.js"
+  },
+  "keywords": ["sih", "inclusive-education", "accessibility", "isl", "haptics", "mediapipe", "speech-api"],
+  "author": "SIH Team",
+  "license": "MIT"
+}

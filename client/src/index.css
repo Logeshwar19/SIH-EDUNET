@@ -1,0 +1,294 @@
+@import "tailwindcss";
+
+/* ============================================================
+   INCLUSIVEAI / BLIND & DEAF — SLEEK GREY & BLACK ONYX SYSTEM
+   Minimalist Dark Glass, High Contrast, Platinum & Silver
+   ============================================================ */
+
+:root {
+  /* Typography */
+  --font-display: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+  --font-sans: 'Plus Jakarta Sans', 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, monospace;
+
+  /* Grey & Black Theme Colors */
+  --bg-dark-base: #09090b;
+  --bg-dark-surface: #121215;
+  --bg-dark-card: rgba(24, 24, 27, 0.90);
+  --bg-dark-card-solid: #18181b;
+  
+  --card-border: rgba(255, 255, 255, 0.12);
+  --card-border-strong: rgba(255, 255, 255, 0.22);
+  --card-border-subtle: rgba(255, 255, 255, 0.07);
+  --card-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.7), 0 4px 16px -2px rgba(0, 0, 0, 0.5);
+  --card-shadow-hover: 0 24px 50px -12px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.2);
+
+  /* High-Contrast Readable Text (No invisible fonts!) */
+  --text-heading: #ffffff;       /* Pure white for maximum contrast */
+  --text-body: #d4d4d8;          /* Light zinc silver for high readability */
+  --text-muted: #a1a1aa;         /* Medium zinc */
+  --text-dim: #71717a;           /* Dark zinc */
+
+  /* Sleek Grey & Black Monochromatic Gradients */
+  --grad-dark-hero: linear-gradient(135deg, #18181b 0%, #09090b 100%);
+  --grad-charcoal: linear-gradient(135deg, #27272a 0%, #18181b 100%);
+  --grad-silver: linear-gradient(135deg, #ffffff 0%, #e4e4e7 100%);
+  --grad-glass-border: linear-gradient(135deg, rgba(255, 255, 255, 0.25) 0%, rgba(255, 255, 255, 0.05) 100%);
+  --grad-accent-white: linear-gradient(135deg, #ffffff 0%, #d4d4d8 100%);
+}
+
+* {
+  font-family: var(--font-sans);
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-dark-base);
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(39, 39, 42, 0.5) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(24, 24, 27, 0.6) 0px, transparent 50%),
+    radial-gradient(at 50% 50%, rgba(18, 18, 21, 0.8) 0px, transparent 60%),
+    radial-gradient(at 100% 100%, rgba(39, 39, 42, 0.4) 0px, transparent 50%);
+  background-attachment: fixed;
+  color: var(--text-body);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Background animated subtle grid */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 36px 36px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Ambient cool silver lighting orb */
+body::after {
+  content: '';
+  position: fixed;
+  top: -120px;
+  right: -120px;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.06) 0%, rgba(39, 39, 42, 0.15) 50%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  color: var(--text-heading);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+/* ============================================================
+   GREY & BLACK CARDS & SURFACES
+   ============================================================ */
+
+.ref-card {
+  background: var(--bg-dark-card);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--card-border);
+  border-radius: 24px;
+  box-shadow: var(--card-shadow);
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  color: var(--text-body);
+}
+
+.ref-card:hover {
+  box-shadow: var(--card-shadow-hover);
+  border-color: var(--card-border-strong);
+  transform: translateY(-2px);
+}
+
+.ref-card-purple, .ref-card-pink, .ref-card-dark, .ref-card-hero {
+  background: linear-gradient(135deg, #18181b 0%, #09090b 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 24px;
+  color: #ffffff;
+  box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.85);
+  position: relative;
+  overflow: hidden;
+}
+
+.ref-card-purple h1, 
+.ref-card-purple h2, 
+.ref-card-purple h3,
+.ref-card-pink h1,
+.ref-card-pink h2,
+.ref-card-pink h3,
+.ref-card-hero h1,
+.ref-card-hero h2,
+.ref-card-hero h3 {
+  color: #ffffff !important;
+}
+
+.ref-card-purple p,
+.ref-card-pink p,
+.ref-card-hero p {
+  color: #d4d4d8 !important;
+}
+
+/* ============================================================
+   BUTTONS (Grey & Black Monochrome & Crisp White)
+   ============================================================ */
+
+.btn-purple, .btn-pink, .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.35rem;
+  background: #ffffff;
+  color: #09090b !important;
+  font-weight: 800;
+  font-size: 0.8125rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 4px 16px rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-purple:hover, .btn-pink:hover, .btn-primary:hover {
+  background: #e4e4e7;
+  box-shadow: 0 6px 22px rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.btn-white, .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.35rem;
+  background: #27272a;
+  color: #f4f4f5 !important;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-white:hover, .btn-secondary:hover {
+  background: #3f3f46;
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+/* Schedule Pill */
+.schedule-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.6rem 0.75rem;
+  border-radius: 16px;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+  min-width: 44px;
+}
+
+.schedule-pill.active {
+  background: #ffffff;
+  color: #09090b;
+  border-color: #ffffff;
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.25);
+}
+
+.schedule-pill.active span {
+  color: #09090b !important;
+}
+
+/* Live Caption tokens */
+.caption-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.875rem 1rem;
+  background: #121215;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  scrollbar-width: none;
+}
+.caption-strip::-webkit-scrollbar { display: none; }
+
+.caption-token {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.85rem;
+  background: #27272a;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  color: #e4e4e7;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  animation: token-appear 0.25s ease forwards;
+}
+
+.caption-token.new {
+  background: #ffffff;
+  color: #09090b;
+  border-color: #ffffff;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.75rem;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 9999px;
+  color: #f87171;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  background: #ef4444;
+  border-radius: 50%;
+  animation: live-pulse 1.2s ease-in-out infinite;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
+
+@keyframes token-appear {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
