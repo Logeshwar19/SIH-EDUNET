@@ -12,7 +12,8 @@ import {
   broadcastTeacherReply,
   subscribeLecture,
   sentenceToISLGlosses,
-  sendStudentQuestionViaWS
+  sendStudentQuestionViaWS,
+  clearStaleLiveData
 } from './services/liveLecture';
 
 // Robust Error Boundary to prevent black screens
@@ -55,39 +56,28 @@ class ErrorBoundary extends Component {
 }
 
 export default function App() {
-  // ── Authentication & Profile State ──────────────────────────────────────────
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      const stored = localStorage.getItem('inclusiveai_user_auth');
-      return stored ? JSON.parse(stored) : null;
+      const saved = localStorage.getItem('inclusiveai_current_user');
+      return saved ? JSON.parse(saved) : null;
     } catch {
       return null;
     }
   });
-
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(!currentUser);
-
-  // Active module tab is strictly derived from user's chosen role
+  const [defaultRoleOnAuth, setDefaultRoleOnAuth] = useState('teacher');
   const [activeTab, setActiveTab] = useState(() => {
     try {
-      const stored = localStorage.getItem('inclusiveai_user_auth');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.role === 'teacher' || parsed.role === 'deaf' || parsed.role === 'blind') {
-          return parsed.role;
-        }
+      const saved = localStorage.getItem('inclusiveai_current_user');
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u.role === 'teacher') return 'teacher';
+        if (u.role === 'deaf_student') return 'deaf';
+        if (u.role === 'blind_student') return 'blind';
       }
-    } catch (e) {}
-    return 'teacher';
+    } catch {}
+    return 'auth';
   });
-
-  // Sync activeTab whenever currentUser role changes
-  useEffect(() => {
-    if (currentUser?.role) {
-      setActiveTab(currentUser.role);
-    }
-  }, [currentUser]);
-
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [lessons, setLessons] = useState(initialLessons);
   const [currentLessonId, setCurrentLessonId] = useState(null);
   const [students, setStudents] = useState(initialStudents);
@@ -104,15 +94,16 @@ export default function App() {
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [hapticsEnabled, setHapticsEnabled] = useState(true);
 
-  // Handle URL parameters for direct join
+  // Handle URL parameters on load + clean up stale live class data
   useEffect(() => {
+    // Clear any stale live class data from previous sessions
+    clearStaleLiveData();
+    
     try {
       const params = new URLSearchParams(window.location.search);
       const roleParam = params.get('role');
       if (roleParam === 'deaf' || roleParam === 'blind' || roleParam === 'teacher') {
-        if (!currentUser) {
-          setActiveTab(roleParam);
-        }
+        setDefaultRoleOnAuth(roleParam);
       }
     } catch (e) {}
   }, [currentUser]);
@@ -271,17 +262,28 @@ export default function App() {
     return () => window.removeEventListener('inclusiveai-lesson-shared', handleIncomingLesson);
   }, []);
 
-  const handleAuthSuccess = (profile) => {
-    setCurrentUser(profile);
-    setActiveTab(profile.role);
+  const handleLoginSuccess = useCallback((user) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem('inclusiveai_current_user', JSON.stringify(user));
+    } catch (e) {}
     setIsAuthModalOpen(false);
-  };
+    if (user.role === 'teacher') {
+      setActiveTab('teacher');
+    } else if (user.role === 'deaf' || user.role === 'deaf_student') {
+      setActiveTab('deaf');
+    } else if (user.role === 'blind' || user.role === 'blind_student') {
+      setActiveTab('blind');
+    }
+  }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem('inclusiveai_user_auth');
+  const handleLogout = useCallback(() => {
     setCurrentUser(null);
-    setIsAuthModalOpen(true);
-  };
+    try {
+      localStorage.removeItem('inclusiveai_current_user');
+    } catch (e) {}
+    setActiveTab('auth');
+  }, []);
 
   const currentLesson = lessons.find(l => l.id === currentLessonId) || lessons[0];
 
@@ -375,56 +377,62 @@ export default function App() {
         onStartLiveLecture={handleStartLiveLecture}
         onStopLiveLecture={handleStopLiveLecture}
         currentUser={currentUser}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
         onLogout={handleLogout}
       />
 
-      {/* Main Role-Specific Content Area */}
-      <ErrorBoundary>
-        <main style={{ paddingBottom: '5rem' }}>
-          {activeTab === 'teacher' && (
-            <TeacherDashboard
-              lessons={lessons}
-              currentLessonId={currentLessonId}
-              setCurrentLessonId={setCurrentLessonId}
-              onUploadLesson={handleUploadLesson}
-              students={students}
-              inboxMessages={inboxMessages}
-              setActiveTab={setActiveTab}
-              isLiveLecture={isLiveLecture}
-              onStartLiveLecture={handleStartLiveLecture}
-              onStopLiveLecture={handleStopLiveLecture}
-              onTranscriptUpdate={handleLiveTranscriptUpdate}
-              liveLectureGlosses={liveLectureGlosses}
-              liveLectureTranscript={liveLectureTranscript}
-              onTeacherReply={handleTeacherReply}
-            />
-          )}
+      {/* Main Content Area — Strict Role Isolation */}
+      <main style={{ paddingBottom: '5rem' }}>
+        {!currentUser && (
+          <AuthPortal
+            onLoginSuccess={handleLoginSuccess}
+            currentActiveRole={defaultRoleOnAuth}
+          />
+        )}
 
-          {activeTab === 'deaf' && (
-            <DeafModule
-              lesson={currentLesson}
-              onSavePractice={handleSavePractice}
-              onSendMessageToTeacher={handleSendMessageToTeacher}
-              isLiveLecture={isLiveLecture}
-              liveLectureGlosses={liveLectureGlosses}
-              liveTeacherReply={liveTeacherReply}
-            />
-          )}
+        {currentUser?.role === 'teacher' && (
+          <TeacherDashboard
+            currentUser={currentUser}
+            lessons={lessons}
+            currentLessonId={currentLessonId}
+            setCurrentLessonId={setCurrentLessonId}
+            onUploadLesson={handleUploadLesson}
+            students={students}
+            inboxMessages={inboxMessages}
+            setActiveTab={setActiveTab}
+            isLiveLecture={isLiveLecture}
+            onStartLiveLecture={handleStartLiveLecture}
+            onStopLiveLecture={handleStopLiveLecture}
+            onTranscriptUpdate={handleLiveTranscriptUpdate}
+            liveLectureGlosses={liveLectureGlosses}
+            liveLectureTranscript={liveLectureTranscript}
+            onTeacherReply={handleTeacherReply}
+          />
+        )}
 
-          {activeTab === 'blind' && (
-            <BlindModule
-              lesson={currentLesson}
-              isAudioMuted={isAudioMuted}
-              hapticsEnabled={hapticsEnabled}
-              isLiveLecture={isLiveLecture}
-              liveLectureTranscript={liveLectureTranscript}
-            />
-          )}
-        </main>
-      </ErrorBoundary>
+        {currentUser?.role === 'deaf_student' && (
+          <DeafModule
+            lesson={currentLesson}
+            onSavePractice={handleSavePractice}
+            onSendMessageToTeacher={handleSendMessageToTeacher}
+            isLiveLecture={isLiveLecture}
+            liveLectureGlosses={liveLectureGlosses}
+            liveTeacherReply={liveTeacherReply}
+          />
+        )}
 
-      {/* Persistent Accessible Footer */}
+        {currentUser?.role === 'blind_student' && (
+          <BlindModule
+            lesson={currentLesson}
+            isAudioMuted={isAudioMuted}
+            hapticsEnabled={hapticsEnabled}
+            isLiveLecture={isLiveLecture}
+            liveLectureTranscript={liveLectureTranscript}
+          />
+        )}
+      </main>
+
+      {/* Persistent Footer */}
       <footer style={{
         borderTop: '1px solid rgba(255,255,255,0.08)',
         padding: '1.25rem 1rem',

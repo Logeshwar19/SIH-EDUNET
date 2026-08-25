@@ -63,6 +63,7 @@ const STAGE_LABELS = [
 ];
 
 export default function TeacherDashboard({
+  currentUser,
   lessons,
   currentLessonId,
   setCurrentLessonId,
@@ -78,32 +79,54 @@ export default function TeacherDashboard({
   liveLectureTranscript,
   onTeacherReply,
 }) {
-  // ── Teacher Profile State ─────────────────────────────────────────────────
+  // ── Teacher Profile State (Synced with Logged-in User) ───────────────────────
   const [teacherName, setTeacherName] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_name') || '"Prof. Ananya Sharma"'); } catch { return 'Prof. Ananya Sharma'; }
+    if (currentUser?.name) return currentUser.name;
+    try {
+      const saved = localStorage.getItem('inclusiveai_teacher_name');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return 'Teacher (Host)';
   });
   const [teacherSubject, setTeacherSubjectState] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_subject') || '"Biology & Science"'); } catch { return 'Biology & Science'; }
+    if (currentUser?.subject || currentUser?.school) return currentUser.subject || currentUser.school;
+    try {
+      const saved = localStorage.getItem('inclusiveai_teacher_subject');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return 'Biology & Science';
   });
   const [teacherEmail, setTeacherEmail] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_email') || '"teacher@school.edu.in"'); } catch { return 'teacher@school.edu.in'; }
-  });
-  const [customTeacherId, setCustomTeacherId] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_id') || '"TCH-BIO101"'); } catch { return 'TCH-BIO101'; }
+    if (currentUser?.email) return currentUser.email;
+    try {
+      const saved = localStorage.getItem('inclusiveai_teacher_email');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return 'teacher@inclusiveai.edu';
   });
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
-  const [copiedTeacherId, setCopiedTeacherId] = useState(false);
 
-  // Active Teacher ID
-  const teacherId = customTeacherId || generateTeacherID(teacherName);
+  // Sync state whenever logged-in user changes
+  useEffect(() => {
+    if (currentUser) {
+      if (currentUser.name) setTeacherName(currentUser.name);
+      if (currentUser.email) setTeacherEmail(currentUser.email);
+      if (currentUser.subject || currentUser.school) {
+        setTeacherSubjectState(currentUser.subject || currentUser.school);
+      }
+    }
+  }, [currentUser]);
+
+  // Compute Teacher ID from name (deterministic)
+  const teacherId = generateTeacherID(teacherName || currentUser?.name || 'Teacher');
 
   const getTeacherProfileObj = () => ({
     id: teacherId,
-    name: teacherName,
-    subject: teacherSubject,
-    email: teacherEmail,
-    avatar: '👩‍🏫'
+    name: teacherName || currentUser?.name || 'Teacher (Host)',
+    subject: teacherSubject || currentUser?.subject || 'Science & Education',
+    email: teacherEmail || currentUser?.email || '',
+    avatar: currentUser?.avatar || null
   });
 
   const handleSaveProfile = () => {
@@ -361,9 +384,7 @@ export default function TeacherDashboard({
       setTimeout(() => {
         if (data.success && data.lesson) {
           if (extractedImageTactile && data.lesson.bviModule) {
-            data.lesson.bviModule.hapticDiagram.outlineDataUrl = extractedImageTactile.outlineDataUrl;
-            data.lesson.bviModule.hapticDiagram.edgeMask = extractedImageTactile.edgeMask;
-            data.lesson.bviModule.hapticDiagram.landmarks = extractedImageTactile.landmarks;
+            data.lesson.bviModule.hapticDiagram = extractedImageTactile;
           }
           onUploadLesson(data.lesson);
           broadcastLessonToRoom(data.lesson, roomCode);
@@ -399,19 +420,25 @@ export default function TeacherDashboard({
                 { sectionTitle: 'Section 1: Overview', content: uploadText || `Foundational overview for ${uploadTitle || 'this curriculum'}.` },
                 { sectionTitle: 'Section 2: Detailed Principles', content: 'Detailed analysis of functional elements and mechanisms.' }
               ],
-              hapticDiagram: {
+              hapticDiagram: extractedImageTactile || {
                 id: `diagram-${Date.now()}`,
                 title: `Diagram: ${uploadTitle || 'Structure Cross-Section'}`,
-                aspectRatio: '4:3',
-                viewBox: { width: 800, height: 600 },
-                outlineDataUrl: extractedImageTactile?.outlineDataUrl || null,
-                edgeMask: extractedImageTactile?.edgeMask || null,
-                paths: extractedImageTactile ? [] : [
-                  { id: 'boundary', name: 'Outer Structural Boundary', type: 'boundary', d: 'M 400,120 C 520,70 660,160 640,320 C 620,440 460,530 400,560 C 340,530 180,440 160,320 C 140,160 280,70 400,120 Z', vibrationPattern: [40, 25] }
-                ],
-                landmarks: extractedImageTactile?.landmarks || [
-                  { id: 'poi-1', name: 'Primary Region', x: 400, y: 320, radius: 50, audioDescription: `You are touching the primary region of ${uploadTitle || 'this structure'}.`, hapticTone: [100, 50, 100], color: '#ffffff' }
-                ],
+                viewBox: "0 0 400 460",
+                width: 400,
+                height: 460,
+                partOrder: ['part-1'],
+                parts: {
+                  'part-1': {
+                    id: 'part-1',
+                    name: 'Primary Region',
+                    labelX: 200,
+                    labelY: 230,
+                    d: 'M 200,120 C 260,70 330,160 320,240 C 310,320 230,380 200,400 C 170,380 90,320 80,240 C 70,160 140,70 200,120 Z',
+                    intro: `First: trace the primary outer boundary of ${uploadTitle || 'this diagram'}.`,
+                    fallbackExplain: `This is the primary structural region of ${uploadTitle || 'the lesson'}.`
+                  }
+                },
+                summary: `Tactile diagram for ${uploadTitle || 'the uploaded material'}.`
               },
               voiceQuiz: [
                 { id: `vq-${Date.now()}-1`, spokenQuestion: 'What is the primary function described in this lesson?', expectedKeywords: ['concept', 'system', 'function', 'structure'], modelAnswer: 'The primary function focuses on system structure and physiological flow.', points: 10 }
@@ -463,7 +490,9 @@ export default function TeacherDashboard({
             {/* ── Teacher Profile ID Card ── */}
             <div style={{ marginTop: '1.25rem', padding: '1rem 1.25rem', background: '#18181b', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
               {/* Avatar */}
-              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(135deg, #3f3f46, #52525b)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.35rem', flexShrink: 0 }}>👩‍🏫</div>
+              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(135deg, #3f3f46, #52525b)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.35rem', flexShrink: 0 }}>
+                {currentUser?.avatar || (currentUser?.name ? currentUser.name[0]?.toUpperCase() : '👩‍🏫')}
+              </div>
               {/* Info */}
               <div style={{ flex: 1, minWidth: 160 }}>
                 <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>{teacherName}</div>

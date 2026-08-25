@@ -12,6 +12,8 @@ import { getSignSequence, evaluateGesture } from './services/deafModule.js';
 import { getHapticDiagram, evaluateVoiceAnswer } from './services/blindModule.js';
 import { matchSignToLesson, normalizeGlossToMeaning } from './services/semanticMatcher.js';
 import { sampleLessons, sampleStudents } from './sampleData.js';
+import { connectDB, isDbConnected } from './db/connection.js';
+import { User, Class, Lesson, Progress, Message, LiveSession } from './models/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,6 +22,9 @@ const clientDistPath = path.join(__dirname, '../client/dist');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Connect to MongoDB
+connectDB();
+
 // Enable CORS for frontend and any LAN device IP during multi-device classroom usage
 app.use(cors({
   origin: true,
@@ -27,86 +32,227 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '15mb' }));
 
-// In-memory Database state
+// Clean In-memory Database state (Empty - populated exclusively by real user uploads & actions)
 const db = {
   lessons: {},
-  progress: {
-    'student-rohan': {
-      signPractice: [
-        { signWord: 'Heart', accuracy: 96, at: Date.now() - 3600000 },
-        { signWord: 'Pump', accuracy: 91, at: Date.now() - 1800000 }
-      ],
-      quizResults: []
-    },
-    'student-ananya': {
-      signPractice: [],
-      quizResults: [
-        { questionId: 'vq-1', correct: true, score: 10, at: Date.now() - 2400000 },
-        { questionId: 'vq-2', correct: true, score: 10, at: Date.now() - 1200000 }
-      ]
-    }
-  },
-  teacherInbox: [
-    {
-      id: "inbox-1",
-      studentId: "student-rohan",
-      studentName: "Rohan Patel (Deaf)",
-      type: "sign_to_text",
-      message: "Signed: Teacher, can we review how the Left Ventricle pumps blood?",
-      timestamp: new Date(Date.now() - 3600000).toISOString()
-    },
-    {
-      id: "inbox-2",
-      studentId: "student-ananya",
-      studentName: "Ananya Sharma (Blind)",
-      type: "voice_quiz_completed",
-      message: "Completed Voice Quiz for 'The Human Heart & Circulatory System' with 100% score.",
-      timestamp: new Date(Date.now() - 1800000).toISOString()
-    }
-  ]
+  progress: {},
+  teacherInbox: []
 };
 
-// Populate initial sample lessons into DB
-sampleLessons.forEach(l => {
-  db.lessons[l.id] = {
-    ...l,
-    text_blocks: l.bviModule?.audioSections?.map(s => s.content) || [l.summary],
-    concepts: l.islModule?.lessonGlosses?.map(g => ({
-      word: g.word,
-      gloss: g.gloss,
-      description: g.description,
-      signAsset: `${g.word.toLowerCase()}.mp4`
-    })) || [],
-    diagrams: l.bviModule?.hapticDiagram ? [
+// ── Authentication & Portal User Routes ──────────────────────────────────────
+
+// A. Get available sample profiles for instant demo login
+app.get('/api/auth/profiles', async (req, res) => {
+  try {
+    const mongoUsers = await User.find({}).lean();
+    if (mongoUsers && mongoUsers.length > 0) {
+      return res.json({
+        success: true,
+        teachers: mongoUsers.filter(u => u.role === 'teacher'),
+        deafStudents: mongoUsers.filter(u => u.role === 'deaf_student'),
+        blindStudents: mongoUsers.filter(u => u.role === 'blind_student')
+      });
+    }
+  } catch (e) {}
+
+  res.json({
+    success: true,
+    teachers: [
       {
-        id: l.bviModule.hapticDiagram.id,
-        label: l.bviModule.hapticDiagram.title,
-        description: l.summary,
-        outlinePath: [
-          { x: 0.50, y: 0.15 }, { x: 0.65, y: 0.18 }, { x: 0.78, y: 0.32 },
-          { x: 0.80, y: 0.50 }, { x: 0.70, y: 0.70 }, { x: 0.55, y: 0.88 },
-          { x: 0.50, y: 0.95 }, { x: 0.45, y: 0.88 }, { x: 0.30, y: 0.70 },
-          { x: 0.20, y: 0.50 }, { x: 0.22, y: 0.32 }, { x: 0.35, y: 0.18 },
-          { x: 0.50, y: 0.15 }
-        ],
-        regions: l.bviModule.hapticDiagram.landmarks.map(lm => ({
-          id: lm.id,
-          label: lm.name.toLowerCase(),
-          x: lm.x / 800,
-          y: lm.y / 600,
-          radius: lm.radius / 800,
-          description: lm.audioDescription
-        }))
+        customId: 'teacher-main',
+        name: 'Dr. Priya Sharma',
+        email: 'priya.sharma@inclusiveai.edu',
+        role: 'teacher',
+        avatar: '👩‍🏫',
+        school: 'Delhi Public Inclusive School',
+        grade: 'Grade 10'
       }
-    ] : [],
-    quiz_items: l.bviModule?.voiceQuiz?.map(q => ({
-      id: q.id,
-      prompt: q.spokenQuestion,
-      spokenQuestion: q.spokenQuestion,
-      acceptedAnswerKeywords: q.expectedKeywords,
-      modelAnswer: q.modelAnswer
-    })) || []
-  };
+    ],
+    deafStudents: [
+      {
+        customId: 'student-rohan',
+        name: 'Rohan Patel',
+        email: 'rohan@inclusiveai.edu',
+        role: 'deaf_student',
+        avatar: '🤟',
+        school: 'Delhi Public Inclusive School',
+        grade: 'Grade 10'
+      }
+    ],
+    blindStudents: [
+      {
+        customId: 'student-ananya',
+        name: 'Ananya Sharma',
+        email: 'ananya@inclusiveai.edu',
+        role: 'blind_student',
+        avatar: '👁️',
+        school: 'Delhi Public Inclusive School',
+        grade: 'Grade 10'
+      }
+    ]
+  });
+});
+
+// B. Role-based Login (Supports Custom ID, Email/Password, or Instant Demo Token)
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password, customId, role } = req.body;
+
+  try {
+    let user = null;
+    if (customId) {
+      user = await User.findOne({ customId }).lean();
+    } else if (email) {
+      user = await User.findOne({ email: email.toLowerCase().trim() }).lean();
+    }
+
+    if (!user) {
+      // Fallback matching against standard demo profiles
+      if (customId === 'teacher-main' || email?.includes('priya') || role === 'teacher') {
+        user = {
+          _id: 'usr_teacher_priya',
+          customId: 'teacher-main',
+          name: 'Dr. Priya Sharma',
+          email: email || 'priya.sharma@inclusiveai.edu',
+          role: 'teacher',
+          avatar: '👩‍🏫',
+          school: 'Delhi Public Inclusive School',
+          grade: 'Grade 10'
+        };
+      } else if (customId === 'student-rohan' || email?.includes('rohan') || role === 'deaf_student') {
+        user = {
+          _id: 'usr_student_rohan',
+          customId: 'student-rohan',
+          name: 'Rohan Patel',
+          email: email || 'rohan@inclusiveai.edu',
+          role: 'deaf_student',
+          avatar: '🤟',
+          school: 'Delhi Public Inclusive School',
+          grade: 'Grade 10'
+        };
+      } else if (customId === 'student-ananya' || email?.includes('ananya') || role === 'blind_student') {
+        user = {
+          _id: 'usr_student_ananya',
+          customId: 'student-ananya',
+          name: 'Ananya Sharma',
+          email: email || 'ananya@inclusiveai.edu',
+          role: 'blind_student',
+          avatar: '👁️',
+          school: 'Delhi Public Inclusive School',
+          grade: 'Grade 10'
+        };
+      } else {
+        return res.status(401).json({ success: false, error: 'Invalid user credentials.' });
+      }
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.customId || user._id,
+        customId: user.customId || user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        school: user.school || 'Delhi Public Inclusive School',
+        grade: user.grade || 'Grade 10',
+        preferences: user.preferences || {}
+      },
+      token: `token_${user.customId || user._id}_${Date.now()}`
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ success: false, error: 'Login server error' });
+  }
+});
+
+// C. Register New User (Teacher / Deaf Student / Blind Student)
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password, role, school, grade, preferences } = req.body;
+  if (!name || !email || !role) {
+    return res.status(400).json({ success: false, error: 'Name, email, and role are required.' });
+  }
+
+  try {
+    const customId = `usr_${role}_${Date.now().toString(36)}`;
+    const avatar = role === 'teacher' ? '👩‍🏫' : role === 'deaf_student' ? '🤟' : '👁️';
+
+    let user = null;
+    try {
+      user = await User.create({
+        customId,
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        password: password || 'password123',
+        role,
+        avatar,
+        school: school || 'Inclusive Model School',
+        grade: grade || 'Grade 10',
+        preferences: preferences || {}
+      });
+    } catch (dbErr) {
+      // Return user object even if Mongo is in offline mode
+      user = {
+        _id: customId,
+        customId,
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        role,
+        avatar,
+        school: school || 'Inclusive Model School',
+        grade: grade || 'Grade 10',
+        preferences: preferences || {}
+      };
+    }
+
+    res.status(201).json({
+      success: true,
+      user: {
+        id: user.customId || user._id,
+        customId: user.customId || user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        school: user.school,
+        grade: user.grade,
+        preferences: user.preferences
+      },
+      token: `token_${user.customId || user._id}_${Date.now()}`
+    });
+  } catch (err) {
+    console.error('Register error:', err);
+    res.status(500).json({ success: false, error: 'Registration error' });
+  }
+});
+
+// D. Student Join Room by Room Code (e.g. CLASS-101)
+app.post('/api/auth/join-room', async (req, res) => {
+  const { roomCode = 'CLASS-101', roomPass = '123456', studentName = 'Student', role = 'deaf_student' } = req.body;
+
+  let classDoc = null;
+  try {
+    classDoc = await Class.findOne({ roomCode: roomCode.toUpperCase().trim() }).lean();
+  } catch (e) {}
+
+  if (!classDoc && roomCode.toUpperCase().trim() !== 'CLASS-101') {
+    return res.status(404).json({ success: false, error: 'Classroom not found. Please check your room code.' });
+  }
+
+  res.json({
+    success: true,
+    roomCode: (classDoc?.roomCode || roomCode).toUpperCase(),
+    className: classDoc?.name || 'Class 10 - Inclusive Science Hub',
+    subject: classDoc?.subject || 'Science & Biology',
+    teacherName: 'Dr. Priya Sharma',
+    user: {
+      id: `guest_${role}_${Date.now().toString(36)}`,
+      name: studentName,
+      role: role,
+      avatar: role === 'deaf_student' ? '🤟' : '👁️',
+      roomCode: (classDoc?.roomCode || roomCode).toUpperCase()
+    }
+  });
 });
 
 // File Upload Validation & Limits (PDF, PPT, TXT, Diagrams/Images)
@@ -252,6 +398,17 @@ app.post('/api/lessons/upload', (req, res) => {
 
       db.lessons[lessonId] = fullLesson;
 
+      // Persist to MongoDB
+      try {
+        await Lesson.findOneAndUpdate(
+          { lessonId },
+          { ...fullLesson, lessonId },
+          { upsert: true, returnDocument: 'after' }
+        );
+      } catch (dbErr) {
+        console.warn('MongoDB save warning:', dbErr.message);
+      }
+
       // Broadcast new lesson to all connected student laptops in real-time
       try {
         const lessonPayload = JSON.stringify({
@@ -306,7 +463,21 @@ app.post('/api/lessons/broadcast', (req, res) => {
 });
 
 // 2. Get all lessons
-app.get('/api/lessons', (req, res) => {
+app.get('/api/lessons', async (req, res) => {
+  try {
+    const mongoLessons = await Lesson.find({}).sort({ createdAt: -1 }).lean();
+    if (mongoLessons && mongoLessons.length > 0) {
+      const formatted = mongoLessons.map(l => ({ ...l, id: l.lessonId || l._id.toString() }));
+      return res.json({
+        success: true,
+        count: formatted.length,
+        lessons: formatted
+      });
+    }
+  } catch (err) {
+    console.warn('MongoDB fetch fallback:', err.message);
+  }
+
   res.json({
     success: true,
     count: Object.keys(db.lessons).length,
@@ -315,15 +486,33 @@ app.get('/api/lessons', (req, res) => {
 });
 
 // 3. Get single lesson
-app.get('/api/lessons/:id', (req, res) => {
+app.get('/api/lessons/:id', async (req, res) => {
+  try {
+    const mongoLesson = await Lesson.findOne({ lessonId: req.params.id }).lean();
+    if (mongoLesson) {
+      return res.json({
+        success: true,
+        lesson: { ...mongoLesson, id: mongoLesson.lessonId || mongoLesson._id.toString() }
+      });
+    }
+  } catch (err) {
+    console.warn('MongoDB single fetch fallback:', err.message);
+  }
+
   const lesson = db.lessons[req.params.id];
   if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
   res.json({ success: true, lesson });
 });
 
 // 3b. Semantic Lesson Matching (Student sign gloss -> Vector search over currently selected lesson)
-app.post('/api/lessons/:id/semantic-match', (req, res) => {
-  const lesson = db.lessons[req.params.id];
+app.post('/api/lessons/:id/semantic-match', async (req, res) => {
+  let lesson = db.lessons[req.params.id];
+  if (!lesson) {
+    try {
+      lesson = await Lesson.findOne({ lessonId: req.params.id }).lean();
+      if (lesson) lesson.id = lesson.lessonId;
+    } catch (e) {}
+  }
   if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
   const { gloss } = req.body;
   if (!gloss) return res.status(400).json({ error: 'No sign gloss provided' });
@@ -331,7 +520,7 @@ app.post('/api/lessons/:id/semantic-match', (req, res) => {
   const matchResult = matchSignToLesson(gloss, lesson);
   res.json({
     success: true,
-    lessonId: lesson.id,
+    lessonId: lesson.id || lesson.lessonId,
     lessonTitle: lesson.title,
     gloss,
     ...matchResult
@@ -339,15 +528,21 @@ app.post('/api/lessons/:id/semantic-match', (req, res) => {
 });
 
 // 4. Deaf Module: Get sign sequence
-app.get('/api/deaf/:lessonId/signs', (req, res) => {
-  const lesson = db.lessons[req.params.lessonId];
+app.get('/api/deaf/:lessonId/signs', async (req, res) => {
+  let lesson = db.lessons[req.params.lessonId];
+  if (!lesson) {
+    try {
+      lesson = await Lesson.findOne({ lessonId: req.params.lessonId }).lean();
+      if (lesson) lesson.id = lesson.lessonId;
+    } catch (e) {}
+  }
   if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
   res.json(getSignSequence(lesson));
 });
 
 // 5. Deaf Module: Evaluate gesture practice
-app.post('/api/deaf/practice/evaluate', (req, res) => {
-  const { studentId = 'student-rohan', signWord, landmarkSequence } = req.body;
+app.post('/api/deaf/practice/evaluate', async (req, res) => {
+  const { studentId = 'student-rohan', lessonId, signWord, landmarkSequence } = req.body;
   const result = evaluateGesture(signWord, landmarkSequence);
 
   db.progress[studentId] = db.progress[studentId] || { signPractice: [], quizResults: [] };
@@ -357,6 +552,20 @@ app.post('/api/deaf/practice/evaluate', (req, res) => {
     at: Date.now()
   });
 
+  // Persist to MongoDB Progress collection
+  try {
+    await Progress.create({
+      studentCustomId: studentId,
+      lessonCustomId: lessonId || 'lesson-heart-anatomy',
+      activityType: 'sign_practice',
+      signWord,
+      accuracy: result.accuracy,
+      feedback: result.feedback || `${result.accuracy}% match`
+    });
+  } catch (dbErr) {
+    console.warn('MongoDB progress save warning:', dbErr.message);
+  }
+
   res.json({
     success: true,
     ...result
@@ -364,7 +573,7 @@ app.post('/api/deaf/practice/evaluate', (req, res) => {
 });
 
 // 6. Deaf Module: Sign-to-Text Bridge
-app.post('/api/deaf/sign-to-text', (req, res) => {
+app.post('/api/deaf/sign-to-text', async (req, res) => {
   const { studentId = 'student-rohan', studentName = 'Rohan Patel (Deaf)', recognizedWord } = req.body;
   
   const inboxItem = {
@@ -378,6 +587,19 @@ app.post('/api/deaf/sign-to-text', (req, res) => {
 
   db.teacherInbox.unshift(inboxItem);
 
+  // Persist to MongoDB Messages collection
+  try {
+    await Message.create({
+      messageId: inboxItem.id,
+      studentCustomId: studentId,
+      studentName,
+      type: 'sign_to_text',
+      message: inboxItem.message
+    });
+  } catch (dbErr) {
+    console.warn('MongoDB message save warning:', dbErr.message);
+  }
+
   res.json({
     success: true,
     inboxItem
@@ -385,8 +607,14 @@ app.post('/api/deaf/sign-to-text', (req, res) => {
 });
 
 // 7. Blind Module: Get content (narration, haptic diagrams, quiz)
-app.get('/api/blind/:lessonId/content', (req, res) => {
-  const lesson = db.lessons[req.params.lessonId];
+app.get('/api/blind/:lessonId/content', async (req, res) => {
+  let lesson = db.lessons[req.params.lessonId];
+  if (!lesson) {
+    try {
+      lesson = await Lesson.findOne({ lessonId: req.params.lessonId }).lean();
+      if (lesson) lesson.id = lesson.lessonId;
+    } catch (e) {}
+  }
   if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
   
   res.json({
@@ -396,10 +624,16 @@ app.get('/api/blind/:lessonId/content', (req, res) => {
   });
 });
 
-// 8. Blind Module: Evaluate voice answer (Fix 4: Return 404 for Unknown Question)
-app.post('/api/blind/quiz/evaluate', (req, res) => {
+// 8. Blind Module: Evaluate voice answer
+app.post('/api/blind/quiz/evaluate', async (req, res) => {
   const { studentId = 'student-ananya', lessonId, questionId, spokenAnswer } = req.body;
-  const lesson = db.lessons[lessonId];
+  let lesson = db.lessons[lessonId];
+  if (!lesson) {
+    try {
+      lesson = await Lesson.findOne({ lessonId }).lean();
+      if (lesson) lesson.id = lesson.lessonId;
+    } catch (e) {}
+  }
   if (!lesson) {
     return res.status(404).json({ error: 'Lesson not found', lessonId });
   }
@@ -419,6 +653,22 @@ app.post('/api/blind/quiz/evaluate', (req, res) => {
     at: Date.now()
   });
 
+  // Persist to MongoDB Progress collection
+  try {
+    await Progress.create({
+      studentCustomId: studentId,
+      lessonCustomId: lessonId,
+      activityType: 'voice_quiz',
+      questionId,
+      score: result.score,
+      isCorrect: result.correct,
+      studentAnswer: spokenAnswer,
+      feedback: result.feedback
+    });
+  } catch (dbErr) {
+    console.warn('MongoDB quiz progress save warning:', dbErr.message);
+  }
+
   res.json({
     success: true,
     ...result
@@ -426,23 +676,72 @@ app.post('/api/blind/quiz/evaluate', (req, res) => {
 });
 
 // 9. Teacher: Get Student Progress
-app.get('/api/teacher/progress/:studentId', (req, res) => {
+app.get('/api/teacher/progress/:studentId', async (req, res) => {
+  try {
+    const mongoProgress = await Progress.find({ studentCustomId: req.params.studentId }).sort({ completedAt: -1 }).lean();
+    if (mongoProgress && mongoProgress.length > 0) {
+      const signPractice = mongoProgress
+        .filter(p => p.activityType === 'sign_practice')
+        .map(p => ({ signWord: p.signWord, accuracy: p.accuracy, at: new Date(p.completedAt).getTime() }));
+      const quizResults = mongoProgress
+        .filter(p => p.activityType === 'voice_quiz' || p.activityType === 'visual_quiz')
+        .map(p => ({ questionId: p.questionId, score: p.score, correct: p.isCorrect, at: new Date(p.completedAt).getTime() }));
+
+      return res.json({ signPractice, quizResults });
+    }
+  } catch (e) {}
+
   res.json(db.progress[req.params.studentId] || { signPractice: [], quizResults: [] });
 });
 
 // 10. Teacher: Dashboard summary
-app.get('/api/teacher/dashboard', (req, res) => {
+app.get('/api/teacher/dashboard', async (req, res) => {
+  let lessonsList = Object.values(db.lessons);
+  let messagesList = db.teacherInbox;
+  let studentsList = [];
+
+  try {
+    const mongoLessons = await Lesson.find({}).sort({ createdAt: -1 }).lean();
+    if (mongoLessons && mongoLessons.length > 0) {
+      lessonsList = mongoLessons.map(l => ({ ...l, id: l.lessonId || l._id.toString() }));
+    }
+    const mongoMessages = await Message.find({}).sort({ timestamp: -1 }).limit(20).lean();
+    if (mongoMessages && mongoMessages.length > 0) {
+      messagesList = mongoMessages.map(m => ({
+        id: m.messageId || m._id.toString(),
+        studentId: m.studentCustomId,
+        studentName: m.studentName,
+        type: m.type,
+        message: m.message,
+        timestamp: m.timestamp
+      }));
+    }
+    const mongoStudents = await User.find({ role: { $in: ['deaf_student', 'blind_student'] } }).lean();
+    if (mongoStudents && mongoStudents.length > 0) {
+      studentsList = mongoStudents.map(s => ({
+        id: s.customId || s._id.toString(),
+        name: s.name,
+        type: s.role === 'deaf_student' ? 'deaf' : 'blind',
+        avatar: s.avatar || (s.role === 'deaf_student' ? '🤟' : '👁️'),
+        school: s.school || 'Inclusive School',
+        grade: s.grade || 'Grade 10',
+        completedLessons: 0,
+        signAccuracyAvg: 0
+      }));
+    }
+  } catch (e) {}
+
   res.json({
     success: true,
     stats: {
-      totalLessons: Object.keys(db.lessons).length,
-      activeStudents: sampleStudents.length,
-      avgDeafSignAccuracy: 93,
-      avgBlindQuizScore: 95
+      totalLessons: lessonsList.length,
+      activeStudents: studentsList.length,
+      avgDeafSignAccuracy: 0,
+      avgBlindQuizScore: 0
     },
-    students: sampleStudents,
-    inbox: db.teacherInbox,
-    recentLessons: Object.values(db.lessons).slice(0, 5)
+    students: studentsList,
+    inbox: messagesList,
+    recentLessons: lessonsList.slice(0, 5)
   });
 });
 

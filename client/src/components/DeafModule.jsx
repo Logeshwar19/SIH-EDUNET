@@ -230,6 +230,52 @@ export default function DeafModule({
     };
   }, [studentRoomCode]);
 
+  // Direct localStorage polling — most reliable cross-tab sync
+  // This runs independently and catches live class data even if BroadcastChannel fails
+  useEffect(() => {
+    const poll = setInterval(() => {
+      try {
+        // Check for active live class
+        const statusKey = 'inclusiveai_room_status_' + studentRoomCode;
+        const statusRaw = localStorage.getItem(statusKey) || localStorage.getItem('inclusiveai_active_live_class');
+        if (statusRaw) {
+          const status = JSON.parse(statusRaw);
+          const age = Date.now() - (status.timestamp || 0);
+          if (age < 15000 && (status.isLive || status.type === 'LIVE_CLASS_STARTED')) {
+            if (!isRoomBroadcastLive) {
+              setIsRoomBroadcastLive(true);
+              setLiveTeacherInfo({
+                name: status.teacherName || 'Teacher',
+                id: status.teacherId || 'TCH-0000',
+                subject: status.teacherSubject || ''
+              });
+            }
+            // Read video frame
+            const frame = localStorage.getItem('inclusiveai_live_frame');
+            if (frame) setTeacherLiveVideoFrame(frame);
+            // Read transcript
+            const tRaw = localStorage.getItem('inclusiveai_live_transcript');
+            if (tRaw) {
+              const t = JSON.parse(tRaw);
+              if (t.rawText) {
+                setRoomTranscript(t.rawText);
+                setActiveSignText(t.rawText);
+              }
+              if (t.glosses) setRoomGlosses(t.glosses);
+            }
+          } else if (age >= 15000 && isRoomBroadcastLive) {
+            // Teacher heartbeat expired
+            setIsRoomBroadcastLive(false);
+            setTeacherLiveVideoFrame(null);
+            setLiveTeacherInfo(null);
+          }
+        }
+      } catch (e) {}
+    }, 800);
+
+    return () => clearInterval(poll);
+  }, [studentRoomCode, isRoomBroadcastLive]);
+
   // Subscribe to teacher reply via BroadcastChannel
   useEffect(() => {
     const unsub = subscribeTeacherReply((glosses, rawText) => {
@@ -963,48 +1009,53 @@ export default function DeafModule({
             </div>
           )}
           
-          {/* Room Join & Connection Bar (Google Meet Style Multi-Device Hub) */}
-          <div className="ref-card" style={{ padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <div style={{ width: 36, height: 36, borderRadius: '10px', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
-                <Radio style={{ width: 18, height: 18, color: (isRoomBroadcastLive || isLiveLecture) ? '#ef4444' : '#a1a1aa' }} />
+          {/* Room Join & Connection Bar — Multi-Device Classroom Hub */}
+          <div className="ref-card" style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: '12px',
+                  background: (isRoomBroadcastLive || isLiveLecture) ? 'rgba(239, 68, 68, 0.15)' : '#27272a',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#ffffff',
+                  border: (isRoomBroadcastLive || isLiveLecture) ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)'
+                }}>
+                  <Radio style={{ width: 20, height: 20, color: (isRoomBroadcastLive || isLiveLecture) ? '#ef4444' : '#71717a' }} />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#ffffff' }}>
+                      Teacher Live Stream Classroom
+                    </h4>
+                    {(isRoomBroadcastLive || isLiveLecture) ? (
+                      <span className="live-badge" style={{ fontSize: '0.65rem', background: '#ef4444', color: '#ffffff' }}>
+                        <span className="live-dot" style={{ background: '#ffffff', boxShadow: '0 0 6px #ffffff' }} /> LIVE NOW
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#a1a1aa', background: '#27272a', padding: '0.15rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        🟢 HUB SYNCED
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8125rem', color: (isRoomBroadcastLive || isLiveLecture) ? '#34d399' : '#a1a1aa', lineHeight: 1.4 }}>
+                    {(isRoomBroadcastLive || isLiveLecture) ? (
+                      `🟢 Connected to ${studentRoomCode} • Live Video & Speech-to-Sign Active`
+                    ) : (
+                      `Connected to room ${studentRoomCode} • Ready to receive live broadcast from Teacher`
+                    )}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 800, color: '#ffffff' }}>
-                  Live Class Stream • Google Meet Room
-                </h4>
-                <p style={{ margin: 0, fontSize: '0.75rem', color: '#a1a1aa' }}>
-                  {(isRoomBroadcastLive || isLiveLecture) ? `🟢 Connected to live stream in room ${studentRoomCode}` : `Connected to room ${studentRoomCode} (Awaiting Teacher Broadcast)`}
-                </p>
-              </div>
-            </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-              <div style={{ background: '#121215', padding: '0.35rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem' }}>
-                <span style={{ color: '#a1a1aa' }}>Room:</span>
-                <input
-                  type="text"
-                  value={studentRoomCode}
-                  onChange={(e) => setStudentRoomCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. ROOM-SIH-2026"
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#ffffff',
-                    fontFamily: 'var(--font-mono)',
-                    fontWeight: 800,
-                    fontSize: '0.8125rem',
-                    width: '135px',
-                    outline: 'none'
-                  }}
-                  title="Change room code to connect to teacher's laptop"
-                />
-              </div>
-
+              {/* Status Badge */}
               <span style={{
                 fontSize: '0.75rem',
                 fontWeight: 800,
-                padding: '0.35rem 0.85rem',
+                padding: '0.4rem 0.95rem',
                 borderRadius: '9999px',
                 background: (isRoomBroadcastLive || isLiveLecture) ? 'rgba(239, 68, 68, 0.15)' : 'rgba(52, 211, 153, 0.15)',
                 color: (isRoomBroadcastLive || isLiveLecture) ? '#f87171' : '#34d399',
@@ -1015,6 +1066,177 @@ export default function DeafModule({
               }}>
                 {(isRoomBroadcastLive || isLiveLecture) ? '🔴 ON AIR STREAM' : '🟢 HUB SYNCED'}
               </span>
+            </div>
+
+            {/* Room Code Selector & Settings */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              background: '#121215',
+              padding: '0.6rem 0.85rem',
+              borderRadius: '14px',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              flexWrap: 'wrap'
+            }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
+                Class Room Code:
+              </span>
+              <input
+                type="text"
+                value={studentRoomCode}
+                onChange={(e) => setStudentRoomCode(e.target.value.toUpperCase())}
+                placeholder="e.g. ROOM-SIH-2026"
+                style={{
+                  background: '#1f1f23',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  color: '#ffffff',
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 800,
+                  fontSize: '0.8125rem',
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: '8px',
+                  width: '160px',
+                  outline: 'none'
+                }}
+                title="Change room code to connect to teacher's laptop"
+              />
+            </div>
+          </div>
+              flexWrap: 'wrap'
+            }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
+                Class Room Code:
+              </span>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: '220px' }}>
+                <input
+                  type="text"
+                  value={studentRoomCode}
+                  onChange={(e) => setStudentRoomCode(e.target.value.toUpperCase().trim())}
+                  placeholder="Paste Room Code (e.g. ROOM-SIH-2026)"
+                  style={{
+                    flex: 1,
+                    background: '#18181b',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    padding: '0.45rem 0.75rem',
+                    color: '#ffffff',
+                    fontSize: '0.85rem',
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    outline: 'none',
+                    letterSpacing: '0.04em'
+                  }}
+                />
+
+                <button
+                  onClick={async () => {
+                    try {
+                      const text = await navigator.clipboard.readText();
+                      if (text) setStudentRoomCode(text.toUpperCase().trim());
+                    } catch (e) {}
+                  }}
+                  title="Paste from clipboard"
+                  style={{
+                    padding: '0.45rem 0.75rem',
+                    background: '#27272a',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    borderRadius: '8px',
+                    color: '#e4e4e7',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  📋 Paste
+                </button>
+
+                <button
+                  onClick={() => {
+                    const code = studentRoomCode?.trim() || DEFAULT_ROOM_CODE;
+                    setStudentRoomCode(code);
+                    setIsRoomConnected(true);
+                    
+                    // Direct local check
+                    try {
+                      const activeClass = localStorage.getItem('inclusiveai_active_live_class') || localStorage.getItem('inclusiveai_room_status_' + code);
+                      if (activeClass) {
+                        const parsed = JSON.parse(activeClass);
+                        if (parsed) {
+                          setIsRoomBroadcastLive(true);
+                          setLiveTeacherInfo({ name: parsed.teacherName, id: parsed.teacherId, subject: parsed.teacherSubject });
+                        }
+                      }
+                      const cachedFrame = localStorage.getItem('inclusiveai_live_frame');
+                      if (cachedFrame) setTeacherLiveVideoFrame(cachedFrame);
+                    } catch (e) {}
+                  }}
+                  style={{
+                    padding: '0.45rem 1.1rem',
+                    background: (isRoomBroadcastLive || isLiveLecture) ? '#10b981' : '#ffffff',
+                    color: (isRoomBroadcastLive || isLiveLecture) ? '#ffffff' : '#09090b',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  {(isRoomBroadcastLive || isLiveLecture) ? '✓ Connected' : '⚡ Connect Room'}
+                </button>
+              </div>
+
+              {/* Quick Preset Room Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span style={{ fontSize: '0.7rem', color: '#71717a' }}>Quick Pick:</span>
+                <button
+                  onClick={() => {
+                    setStudentRoomCode('ROOM-SIH-2026');
+                    try {
+                      const active = localStorage.getItem('inclusiveai_active_live_class');
+                      if (active) {
+                        const p = JSON.parse(active);
+                        setIsRoomBroadcastLive(true);
+                        setLiveTeacherInfo({ name: p.teacherName, id: p.teacherId, subject: p.teacherSubject });
+                      }
+                    } catch (e) {}
+                  }}
+                  style={{
+                    fontSize: '0.6875rem',
+                    padding: '0.2rem 0.55rem',
+                    borderRadius: '6px',
+                    background: studentRoomCode === 'ROOM-SIH-2026' ? 'rgba(59, 130, 246, 0.2)' : '#27272a',
+                    color: studentRoomCode === 'ROOM-SIH-2026' ? '#60a5fa' : '#a1a1aa',
+                    border: studentRoomCode === 'ROOM-SIH-2026' ? '1px solid #3b82f6' : '1px solid transparent',
+                    cursor: 'pointer',
+                    fontFamily: 'monospace'
+                  }}
+                >
+                  ROOM-SIH-2026
+                </button>
+                <button
+                  onClick={() => {
+                    setStudentRoomCode('CLASS-101');
+                  }}
+                  style={{
+                    fontSize: '0.6875rem',
+                    padding: '0.2rem 0.55rem',
+                    borderRadius: '6px',
+                    background: studentRoomCode === 'CLASS-101' ? 'rgba(59, 130, 246, 0.2)' : '#27272a',
+                    color: studentRoomCode === 'CLASS-101' ? '#60a5fa' : '#a1a1aa',
+                    border: studentRoomCode === 'CLASS-101' ? '1px solid #3b82f6' : '1px solid transparent',
+                    cursor: 'pointer',
+                    fontFamily: 'monospace'
+                  }}
+                >
+                  CLASS-101
+                </button>
+              </div>
             </div>
           </div>
 
