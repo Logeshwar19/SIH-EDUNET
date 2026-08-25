@@ -106,6 +106,8 @@ export default function TeacherDashboard({
   });
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
+  const [copiedTeacherId, setCopiedTeacherId] = useState(false);
+  const [customTeacherId, setCustomTeacherId] = useState('');
 
   // Sync state whenever logged-in user changes
   useEffect(() => {
