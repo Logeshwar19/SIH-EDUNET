@@ -4,7 +4,7 @@ import TeacherDashboard from './components/TeacherDashboard';
 import DeafModule from './components/DeafModule';
 import BlindModule from './components/BlindModule';
 import AccessibilityPanel from './components/AccessibilityPanel';
-import AuthPortal from './components/AuthPortal';
+import AuthModal from './components/AuthModal';
 import { initialLessons, initialStudents } from './data/lessonsData';
 import {
   startLectureRecording,
@@ -314,52 +314,6 @@ export default function App() {
           />
         )}
       </main>
-
-      {/* Auth Portal Modal (Quick Switch Portal / Switch User) */}
-      {isAuthModalOpen && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.85)',
-          backdropFilter: 'blur(16px)',
-          zIndex: 100,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '1rem',
-          overflowY: 'auto'
-        }}>
-          <div style={{ position: 'relative', width: '100%', maxWidth: '52rem' }}>
-            <button
-              onClick={() => setIsAuthModalOpen(false)}
-              style={{
-                position: 'absolute',
-                top: 16,
-                right: 20,
-                background: '#27272a',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '50%',
-                width: 36,
-                height: 36,
-                cursor: 'pointer',
-                zIndex: 20,
-                fontSize: '1.1rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-              title="Close"
-            >
-              ✕
-            </button>
-            <AuthPortal
-              onLoginSuccess={handleLoginSuccess}
-              currentActiveRole={activeTab}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Persistent Footer */}
       <footer style={{

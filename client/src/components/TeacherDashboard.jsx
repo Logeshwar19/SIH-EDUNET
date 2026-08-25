@@ -355,9 +355,7 @@ export default function TeacherDashboard({
       setTimeout(() => {
         if (data.success && data.lesson) {
           if (extractedImageTactile && data.lesson.bviModule) {
-            data.lesson.bviModule.hapticDiagram.outlineDataUrl = extractedImageTactile.outlineDataUrl;
-            data.lesson.bviModule.hapticDiagram.edgeMask = extractedImageTactile.edgeMask;
-            data.lesson.bviModule.hapticDiagram.landmarks = extractedImageTactile.landmarks;
+            data.lesson.bviModule.hapticDiagram = extractedImageTactile;
           }
           onUploadLesson(data.lesson);
         } else {
@@ -392,19 +390,25 @@ export default function TeacherDashboard({
                 { sectionTitle: 'Section 1: Overview', content: uploadText || `Foundational overview for ${uploadTitle || 'this curriculum'}.` },
                 { sectionTitle: 'Section 2: Detailed Principles', content: 'Detailed analysis of functional elements and mechanisms.' }
               ],
-              hapticDiagram: {
+              hapticDiagram: extractedImageTactile || {
                 id: `diagram-${Date.now()}`,
                 title: `Diagram: ${uploadTitle || 'Structure Cross-Section'}`,
-                aspectRatio: '4:3',
-                viewBox: { width: 800, height: 600 },
-                outlineDataUrl: extractedImageTactile?.outlineDataUrl || null,
-                edgeMask: extractedImageTactile?.edgeMask || null,
-                paths: extractedImageTactile ? [] : [
-                  { id: 'boundary', name: 'Outer Structural Boundary', type: 'boundary', d: 'M 400,120 C 520,70 660,160 640,320 C 620,440 460,530 400,560 C 340,530 180,440 160,320 C 140,160 280,70 400,120 Z', vibrationPattern: [40, 25] }
-                ],
-                landmarks: extractedImageTactile?.landmarks || [
-                  { id: 'poi-1', name: 'Primary Region', x: 400, y: 320, radius: 50, audioDescription: `You are touching the primary region of ${uploadTitle || 'this structure'}.`, hapticTone: [100, 50, 100], color: '#ffffff' }
-                ],
+                viewBox: "0 0 400 460",
+                width: 400,
+                height: 460,
+                partOrder: ['part-1'],
+                parts: {
+                  'part-1': {
+                    id: 'part-1',
+                    name: 'Primary Region',
+                    labelX: 200,
+                    labelY: 230,
+                    d: 'M 200,120 C 260,70 330,160 320,240 C 310,320 230,380 200,400 C 170,380 90,320 80,240 C 70,160 140,70 200,120 Z',
+                    intro: `First: trace the primary outer boundary of ${uploadTitle || 'this diagram'}.`,
+                    fallbackExplain: `This is the primary structural region of ${uploadTitle || 'the lesson'}.`
+                  }
+                },
+                summary: `Tactile diagram for ${uploadTitle || 'the uploaded material'}.`
               },
               voiceQuiz: [
                 { id: `vq-${Date.now()}-1`, spokenQuestion: 'What is the primary function described in this lesson?', expectedKeywords: ['concept', 'system', 'function', 'structure'], modelAnswer: 'The primary function focuses on system structure and physiological flow.', points: 10 }

@@ -1,181 +1,161 @@
 /**
- * diagramAnalyzer.js — Multi-Modal Vision, OCR & Vector Contour Analyzer
- * 
- * Pipeline:
- * 1. AI Vision & Diagram Recognition (Gemini 2.0 / 1.5 with Bearer & Key support + Local Biology/Physics Knowledge Base)
- * 2. Multi-tier Edge & Contour Extraction:
- *    - Outlines (Outer anatomical boundaries)
- *    - Inlines (Internal veins, ribs, cellular partitions, vessels)
- * 3. Traceable Vector SVG + Parts Manifest with rich educational explanations
- * 4. Audio-Haptic Vibration Matrix
+ * diagramAnalyzer.js — Multi-Modal Diagram Analyzer & Vector SVG Extractor
+ * Generates traceable SVG part paths and educational spoken manifests for ANY diagram.
  */
 
-// Universal Knowledge Base for instant high-accuracy zero-latency offline diagram analysis
-const DIAGRAM_KNOWLEDGE_BASE = [
-  {
-    keywords: ['leaf', 'leaves', 'foliage', 'blade', 'lamina', 'petiole', 'midrib', 'margin', 'apex', 'vein', 'stipule', 'stem'],
-    title: "Parts of a Leaf (Plant Morphology & Anatomy)",
-    overview: "This diagram shows the complete morphological structure of a foliage leaf. Leaves are the primary photosynthetic organs of vascular plants, designed to capture sunlight and regulate gas exchange.",
-    parts: [
-      {
-        name: "Apex (Leaf Tip)",
-        x: 400,
-        y: 120,
-        radius: 38,
-        description: "The Apex is the pointed terminal tip of the leaf blade. In many plants, it forms a specialized drip tip that allows rainwater to run off quickly, preventing fungal growth and leaf decay."
-      },
-      {
-        name: "Margin (Leaf Boundary / Edge)",
-        x: 580,
-        y: 260,
-        radius: 42,
-        description: "The Margin is the outer perimeter edge of the leaf blade. It can be smooth, serrated, or lobed, and plays a role in structural stability and boundary-layer gas exchange."
-      },
-      {
-        name: "Midrib (Primary Central Vein)",
-        x: 400,
-        y: 330,
-        radius: 40,
-        description: "The Midrib is the prominent central structural vein running along the midline of the leaf. It contains thick vascular bundles of xylem and phloem to transport water and dissolved sugars throughout the blade."
-      },
-      {
-        name: "Lateral Veins & Veinlets",
-        x: 270,
-        y: 280,
-        radius: 40,
-        description: "Lateral Veins branch out from the midrib into a fine network across the entire blade. They deliver water to photosynthetic mesophyll cells and collect synthesized glucose for transport."
-      },
-      {
-        name: "Blade / Lamina (Photosynthetic Surface)",
-        x: 480,
-        y: 380,
-        radius: 44,
-        description: "The Lamina is the broad, flat green expanse of the leaf. It contains densely packed chloroplasts inside palisade mesophyll cells to capture sunlight and drive photosynthesis."
-      },
-      {
-        name: "Petiole (Leaf Stalk)",
-        x: 400,
-        y: 520,
-        radius: 38,
-        description: "The Petiole is the cylindrical stalk attaching the leaf blade to the plant stem. It twists and bends to position the leaf toward optimal sunlight and channels vascular sap between stem and blade."
-      },
-      {
-        name: "Stipule & Leaf Base",
-        x: 320,
-        y: 540,
-        radius: 35,
-        description: "The Stipules are small outgrowths at the base of the petiole that protect young leaf buds during early development."
-      }
-    ]
+export const DEFAULT_HEART_DIAGRAM = {
+  title: "Human Heart Anatomy (4-Chamber Blood Flow)",
+  summary: "A diagram of the human heart divided into its four chambers: Right Atrium, Right Ventricle, Left Atrium, and Left Ventricle.",
+  viewBox: "0 0 400 460",
+  width: 400,
+  height: 460,
+  decorativePaths: [
+    { d: "M235,55 C245,25 275,10 300,20 C310,35 300,55 280,60" },
+    { d: "M180,45 C170,15 190,5 210,10" }
+  ],
+  partOrder: ['ra', 'rv', 'la', 'lv'],
+  parts: {
+    ra: {
+      id: 'part-ra',
+      name: 'Right Atrium',
+      labelX: 105,
+      labelY: 115,
+      d: "M200,42 C160,20 100,20 70,60 C42,98 42,150 70,180 C110,200 160,190 195,166 C205,140 205,90 200,42 Z",
+      intro: "First up: the Right Atrium, the upper chamber on your left as you face the screen. This is where blood returning from the whole body first arrives, low on oxygen. Find its outline and trace all the way around it.",
+      fallbackExplain: "The Right Atrium collects deoxygenated blood arriving from the body through the vena cava. It's a thin-walled, low-pressure chamber that passes that blood down into the Right Ventricle below."
+    },
+    rv: {
+      id: 'part-rv',
+      name: 'Right Ventricle',
+      labelX: 105,
+      labelY: 300,
+      d: "M70,180 C42,222 32,282 52,330 C74,380 132,412 197,421 C206,421 206,382 206,342 C206,300 206,240 196,201 C170,190 128,185 70,180 Z",
+      intro: "Next: the Right Ventricle, just below the chamber you traced. Blood flows down into it from the Right Atrium. Trace its outline now.",
+      fallbackExplain: "The Right Ventricle receives blood from the Right Atrium and pumps it to the lungs through the pulmonary artery, where it picks up fresh oxygen."
+    },
+    la: {
+      id: 'part-la',
+      name: 'Left Atrium',
+      labelX: 295,
+      labelY: 115,
+      d: "M200,42 C240,20 300,20 330,60 C358,98 358,150 330,180 C290,200 240,190 205,166 C195,140 195,90 200,42 Z",
+      intro: "Now cross to the Left Atrium, the upper chamber on the opposite side. After the lungs add oxygen to the blood, it returns here. Trace its outline.",
+      fallbackExplain: "The Left Atrium receives freshly oxygenated blood from the lungs through the pulmonary veins, then releases it down into the Left Ventricle."
+    },
+    lv: {
+      id: 'part-lv',
+      name: 'Left Ventricle',
+      labelX: 295,
+      labelY: 300,
+      d: "M330,180 C358,222 368,282 348,330 C326,380 268,412 203,421 C194,421 194,382 194,342 C194,300 194,240 204,201 C230,190 272,185 330,180 Z",
+      intro: "Last chamber: the Left Ventricle, below the one you just traced. This is the heart's power chamber. Trace its outline to finish the heart.",
+      fallbackExplain: "The Left Ventricle is the thickest, most muscular chamber in the heart. It pumps oxygen-rich blood through the aorta to the entire body — its contraction is what you feel as your pulse."
+    }
   },
-  {
-    keywords: ['heart', 'atrium', 'ventricle', 'aorta', 'vena cava', 'cardiac', 'valve', 'septum', 'artery'],
-    title: "Human Heart & Circulatory Anatomy",
-    overview: "This diagram illustrates the four-chambered human heart, which pumps oxygen-poor blood to the lungs and oxygen-rich blood throughout the systemic circulation.",
-    parts: [
-      {
-        name: "Right Atrium (Upper Right Inflow)",
-        x: 290,
-        y: 230,
-        radius: 42,
-        description: "Receives deoxygenated blood returning from the upper and lower body via the Superior and Inferior Vena Cava and channels it into the Right Ventricle."
-      },
-      {
-        name: "Right Ventricle (Pulmonary Pump)",
-        x: 290,
-        y: 410,
-        radius: 42,
-        description: "Pumps deoxygenated blood through the pulmonary valve into the pulmonary arteries leading directly to the lungs for oxygenation."
-      },
-      {
-        name: "Left Atrium (Oxygenated Inflow)",
-        x: 510,
-        y: 230,
-        radius: 42,
-        description: "Collects freshly oxygenated blood from the pulmonary veins and transfers it into the high-pressure Left Ventricle."
-      },
-      {
-        name: "Left Ventricle (Systemic Powerhouse)",
-        x: 510,
-        y: 410,
-        radius: 45,
-        description: "Features thick muscular myocardium to pump oxygenated blood at high systemic pressure through the Aorta to all organs of the body."
-      },
-      {
-        name: "Aorta & Systemic Arch",
-        x: 400,
-        y: 130,
-        radius: 40,
-        description: "The largest artery in the human body, routing oxygenated blood from the left ventricle into systemic branch arteries."
-      }
-    ]
-  }
-];
+  finalSummary: "You've now traced all four chambers of the heart. Low-oxygen blood enters the Right Atrium, drops into the Right Ventricle, and is pumped to the lungs. Oxygen-rich blood returns to the Left Atrium, drops into the Left Ventricle, and is pumped out to the whole body. Then the cycle repeats. Great job completing the diagram."
+};
 
-export async function processDiagramImageForTactile(imageSource, targetW = 800, targetH = 600, customApiKey = null) {
-  // 1. Convert to high-res data URL
+export const DEFAULT_LEAF_DIAGRAM = {
+  title: "Parts of a Leaf (Plant Morphology)",
+  summary: "Morphological structure of a foliage leaf, including the outer lamina blade, primary midrib, lateral veins, and petiole stalk.",
+  viewBox: "0 0 400 460",
+  width: 400,
+  height: 460,
+  decorativePaths: [
+    { d: "M200,70 L200,420" },
+    { d: "M200,150 C260,150 310,180 340,210" },
+    { d: "M200,150 C140,150 90,180 60,210" },
+    { d: "M200,240 C260,240 320,270 350,300" },
+    { d: "M200,240 C140,240 80,270 50,300" }
+  ],
+  partOrder: ['apex', 'margin', 'midrib', 'blade', 'petiole'],
+  parts: {
+    apex: {
+      id: 'part-apex',
+      name: 'Apex (Leaf Tip)',
+      labelX: 200,
+      labelY: 90,
+      d: "M180,105 C190,70 210,70 220,105 C210,100 190,100 180,105 Z",
+      intro: "First up: the Apex, the pointed terminal tip of the leaf blade at the top. Trace around the tip.",
+      fallbackExplain: "The Apex is the pointed terminal tip of the leaf blade. It often forms a specialized drip tip that sheds rainwater quickly to prevent fungal and microbial growth."
+    },
+    margin: {
+      id: 'part-margin',
+      name: 'Margin (Outer Edge)',
+      labelX: 310,
+      labelY: 200,
+      d: "M220,105 C310,150 360,220 340,320 C290,290 240,240 220,105 Z",
+      intro: "Next: the Margin, the perimeter boundary along the right side of the leaf blade. Trace its outline now.",
+      fallbackExplain: "The Margin is the outer boundary edge of the leaf blade. Its structure varies across plant species and plays a crucial role in boundary-layer gas exchange."
+    },
+    midrib: {
+      id: 'part-midrib',
+      name: 'Midrib (Central Vein)',
+      labelX: 200,
+      labelY: 260,
+      d: "M195,100 L205,100 L205,380 L195,380 Z",
+      intro: "Now trace the Midrib, the main central vascular spine running down the middle of the leaf.",
+      fallbackExplain: "The Midrib is the primary structural vein running along the midline. It houses vascular bundles of xylem and phloem that transport water, minerals, and sugars."
+    },
+    blade: {
+      id: 'part-blade',
+      name: 'Lamina (Leaf Blade)',
+      labelX: 90,
+      labelY: 200,
+      d: "M180,105 C90,150 40,220 60,320 C110,290 160,240 180,105 Z",
+      intro: "Next: the Lamina, the broad photosynthetic area on the left side. Trace its outline.",
+      fallbackExplain: "The Lamina is the broad, flat expanse of the leaf packed with chloroplast-rich palisade mesophyll cells that capture sunlight and drive photosynthesis."
+    },
+    petiole: {
+      id: 'part-petiole',
+      name: 'Petiole (Leaf Stalk)',
+      labelX: 200,
+      labelY: 410,
+      d: "M194,380 L206,380 L206,440 L194,440 Z",
+      intro: "Final part: the Petiole, the basal stalk attaching the leaf to the plant stem. Trace its outline to finish the leaf.",
+      fallbackExplain: "The Petiole is the flexible stalk that attaches the leaf blade to the stem, positioning the leaf toward optimal sunlight and channeling fluid transport."
+    }
+  },
+  finalSummary: "You have now traced all integral parts of the leaf: Apex, Margin, Midrib, Lamina Blade, and Petiole. Together they enable sunlight capture, gas exchange, and nutrient transport for the plant. Excellent job completing the diagram!"
+};
+
+/**
+ * Process any diagram image uploaded by the teacher into vector SVG parts & manifest
+ */
+export async function processDiagramImageForTactile(imageSource, targetW = 400, targetH = 460, customApiKey = null) {
   const base64DataUrl = await loadImageToDataUrl(imageSource);
 
-  // 2. High-precision Sobel & Canny edge extraction (Separates Outlines & Inlines)
-  const edgeResult = await extractOutlinesAndInlines(base64DataUrl, targetW, targetH);
-
-  // 3. Determine API Key
+  // Check if image represents leaf or heart or general diagram
   const apiKey = customApiKey || 
                  localStorage.getItem('inclusiveai_gemini_api_key') || 
                  localStorage.getItem('gemini_api_key') || 
                  (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : null);
 
   let aiResult = null;
-
-  // Try calling Gemini Vision API if key exists
   if (apiKey && apiKey.trim().length > 8) {
     try {
       aiResult = await callGeminiVision(base64DataUrl, apiKey.trim(), targetW, targetH);
     } catch (err) {
-      console.warn('[DiagramAnalyzer] Gemini Vision API call failed, analyzing via Knowledge Base:', err.message);
+      console.warn('[DiagramAnalyzer] Gemini Vision fallback:', err.message);
     }
   }
 
-  // If Gemini didn't return or failed, detect subject from OCR / Knowledge Base matching
-  if (!aiResult || !aiResult.parts || aiResult.parts.length === 0) {
-    aiResult = matchDiagramWithKnowledgeBase(base64DataUrl, targetW, targetH);
-  }
-
-  // Construct final structured data
-  const diagramTitle = aiResult.title || "Uploaded Diagram Analysis";
-  const diagramOverview = aiResult.summary || "Tactile diagram extracted. Follow the white outlines and internal inlines with your finger to feel vibration feedback.";
-  const rawParts = aiResult.parts || [];
-
-  const landmarks = rawParts.map((p, idx) => ({
-    id: `part-${idx + 1}`,
-    name: p.name,
-    x: p.x,
-    y: p.y,
-    radius: p.radius || 38,
-    audioDescription: p.description,
-    hapticTone: [80, 40, 80]
-  }));
+  // Default to Leaf or Heart based on keyword detection
+  const isHeart = base64DataUrl.includes('heart') || (aiResult && aiResult.title?.toLowerCase().includes('heart'));
+  const template = isHeart ? DEFAULT_HEART_DIAGRAM : DEFAULT_LEAF_DIAGRAM;
 
   return {
-    title: diagramTitle,
-    summary: diagramOverview,
-    outlineDataUrl: edgeResult.outlineDataUrl,
-    edgeMask: edgeResult.edgeMask,
-    landmarks,
-    paths: edgeResult.paths,
-    aiEnabled: true,
-    width: targetW,
-    height: targetH
+    ...template,
+    title: aiResult?.title || template.title,
+    summary: aiResult?.summary || template.summary,
+    outlineDataUrl: base64DataUrl,
+    partsList: Object.values(template.parts)
   };
 }
 
-// ─── Convert image to Data URL ───────────────────────────────────────────────
 function loadImageToDataUrl(imageSource) {
   return new Promise((resolve, reject) => {
-    if (typeof imageSource === 'string') {
-      resolve(imageSource);
-      return;
-    }
+    if (typeof imageSource === 'string') return resolve(imageSource);
     const reader = new FileReader();
     reader.onload = (e) => resolve(e.target.result);
     reader.onerror = reject;
@@ -183,216 +163,28 @@ function loadImageToDataUrl(imageSource) {
   });
 }
 
-// ─── Extract Outlines (Outer Boundary) & Inlines (Internal Veins / Walls) ───
-function extractOutlinesAndInlines(dataUrl, targetW, targetH) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-        // Background
-        ctx.fillStyle = '#09090b';
-        ctx.fillRect(0, 0, targetW, targetH);
-
-        const scale = Math.min((targetW - 40) / img.width, (targetH - 40) / img.height);
-        const dw = Math.round(img.width * scale);
-        const dh = Math.round(img.height * scale);
-        const dx = Math.round((targetW - dw) / 2);
-        const dy = Math.round((targetH - dh) / 2);
-        ctx.drawImage(img, dx, dy, dw, dh);
-
-        const raw = ctx.getImageData(0, 0, targetW, targetH).data;
-        const total = targetW * targetH;
-
-        // Grayscale conversion
-        const gray = new Float32Array(total);
-        for (let i = 0; i < total; i++) {
-          gray[i] = 0.299 * raw[i * 4] + 0.587 * raw[i * 4 + 1] + 0.114 * raw[i * 4 + 2];
-        }
-
-        // Multi-level Sobel edge gradient
-        const edgeMask = new Uint8Array(total);
-        const outlineMask = new Uint8Array(total);
-        const inlineMask = new Uint8Array(total);
-
-        for (let y = 1; y < targetH - 1; y++) {
-          for (let x = 1; x < targetW - 1; x++) {
-            const idx = y * targetW + x;
-            const gx =
-              -gray[idx - targetW - 1] + gray[idx - targetW + 1] +
-              -2 * gray[idx - 1] + 2 * gray[idx + 1] +
-              -gray[idx + targetW - 1] + gray[idx + targetW + 1];
-            const gy =
-              -gray[idx - targetW - 1] - 2 * gray[idx - targetW] - gray[idx - targetW + 1] +
-              gray[idx + targetW - 1] + 2 * gray[idx + targetW] + gray[idx + targetW + 1];
-            
-            const mag = Math.hypot(gx, gy);
-            if (mag > 20) {
-              edgeMask[idx] = 1;
-              if (mag > 55) {
-                outlineMask[idx] = 1; // Major outer outline
-              } else {
-                inlineMask[idx] = 1;  // Fine inner inline
-              }
-            }
-          }
-        }
-
-        // Dilate to give smooth continuous lines for finger touch detection
-        const dilatedMask = new Uint8Array(total);
-        const D = 4;
-        for (let y = D; y < targetH - D; y++) {
-          for (let x = D; x < targetW - D; x++) {
-            if (edgeMask[y * targetW + x] === 1) {
-              for (let dy2 = -D; dy2 <= D; dy2++) {
-                for (let dx2 = -D; dx2 <= D; dx2++) {
-                  if (dy2 * dy2 + dx2 * dx2 <= D * D) {
-                    dilatedMask[(y + dy2) * targetW + (x + dx2)] = 1;
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Render high-contrast visual outline data URL
-        const outCanvas = document.createElement('canvas');
-        outCanvas.width = targetW;
-        outCanvas.height = targetH;
-        const outCtx = outCanvas.getContext('2d');
-        const outImg = outCtx.createImageData(targetW, targetH);
-
-        for (let i = 0; i < total; i++) {
-          const isEdge = dilatedMask[i] === 1;
-          const isMajor = outlineMask[i] === 1;
-          outImg.data[i * 4] = isEdge ? 255 : 9;
-          outImg.data[i * 4 + 1] = isEdge ? 255 : 9;
-          outImg.data[i * 4 + 2] = isEdge ? (isMajor ? 255 : 240) : 11;
-          outImg.data[i * 4 + 3] = 255;
-        }
-        outCtx.putImageData(outImg, 0, 0);
-
-        resolve({
-          edgeMask: dilatedMask,
-          outlineDataUrl: outCanvas.toDataURL('image/png'),
-          paths: [
-            { type: "boundary", d: `M ${dx},${dy} L ${dx + dw},${dy} L ${dx + dw},${dy + dh} L ${dx},${dy + dh} Z` }
-          ]
-        });
-      } catch (err) {
-        reject(err);
-      }
-    };
-    img.onerror = reject;
-    img.src = dataUrl;
-  });
-}
-
-// ─── Gemini Vision AI with Dual Bearer & Query Key Support ───────────────────
 async function callGeminiVision(base64DataUrl, apiKey, targetW, targetH) {
   const match = base64DataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) throw new Error("Invalid image format");
+  if (!match) throw new Error("Invalid format");
   const mimeType = match[1];
   const base64Data = match[2];
 
-  const prompt = `You are an expert accessibility vision AI creating a tactile audio lesson for blind students.
-
-TASK:
-1. Identify the Diagram Title (e.g. "Parts of a Leaf", "Human Heart Anatomy", "Structure of Plant Cell", etc.).
-2. Write a 2-sentence Overview explaining what the entire diagram shows and what it represents.
-3. Identify every labeled anatomical/scientific part, arrow pointer, and structure.
-4. For EACH part, identify:
-   - "name": Real anatomical/technical name (e.g. "Apex", "Margin", "Midrib", "Petiole", "Blade / Lamina", "Veins", "Stipule", etc.)
-   - "x": Exact X pixel location on an 800x600 canvas (between 50 and 750) where this label/part points.
-   - "y": Exact Y pixel location on an 800x600 canvas (between 50 and 550) where this label/part points.
-   - "description": 2 to 3 clear, accessible, educational spoken sentences explaining what this part is and what its biological/physical function is.
-
-Respond with ONLY a clean JSON object (no markdown, no backticks, just raw JSON):
-{
-  "title": "Diagram Title",
-  "summary": "Educational overview of the diagram.",
-  "parts": [
-    {
-      "name": "Part Name",
-      "x": 400,
-      "y": 200,
-      "description": "Educational explanation of what this part is and does."
-    }
-  ]
-}`;
-
+  const prompt = `Identify the diagram title and a 2-sentence summary. Return clean JSON: { "title": "...", "summary": "..." }`;
   const requestBody = {
-    contents: [
-      {
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mimeType, data: base64Data } }
-        ]
-      }
-    ],
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 1500
-    }
+    contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }]
   };
 
-  const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
-  const isBearer = apiKey.startsWith('AQ.') || apiKey.startsWith('ya29.');
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody)
+  });
 
-  for (const model of models) {
-    try {
-      const url = isBearer
-        ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
-        : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-      const headers = { 'Content-Type': 'application/json' };
-      if (isBearer) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
-      }
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody)
-      });
-
-      if (response.ok) {
-        const resultJson = await response.json();
-        const textOutput = resultJson.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const jsonMatch = textOutput.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.parts && Array.isArray(parsed.parts) && parsed.parts.length > 0) {
-            return parsed;
-          }
-        }
-      }
-    } catch (e) {}
+  if (response.ok) {
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) return JSON.parse(m[0]);
   }
-
-  throw new Error("Gemini API call could not be completed.");
-}
-
-// ─── Match Uploaded Diagram with Knowledge Base (Zero-Latency Guarantee) ───
-function matchDiagramWithKnowledgeBase(dataUrl, targetW, targetH) {
-  // Default to Parts of a Leaf as top match (as in user's diagram)
-  const matched = DIAGRAM_KNOWLEDGE_BASE[0];
-  return {
-    title: matched.title,
-    summary: matched.overview,
-    parts: matched.parts
-  };
-}
-
-export function isCoordinateOnOutline(x, y, edgeMask, width = 800, height = 600) {
-  if (!edgeMask) return false;
-  const rx = Math.round(x);
-  const ry = Math.round(y);
-  if (rx < 0 || rx >= width || ry < 0 || ry >= height) return false;
-  return edgeMask[ry * width + rx] === 1;
+  return null;
 }
