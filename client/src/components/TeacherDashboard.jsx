@@ -33,7 +33,8 @@ import {
   Image as ImageIcon,
   Presentation,
   ShieldCheck,
-  ChevronRight
+  ChevronRight,
+  Laptop
 } from 'lucide-react';
 import {
   DEFAULT_ROOM_CODE,
@@ -45,7 +46,11 @@ import {
   generateTeacherID,
   saveTeacherProfile,
   getTeacherProfile,
-  broadcastLiveSpeechText
+  broadcastLiveSpeechText,
+  generateMeetRoomCode,
+  fetchNetworkInfo,
+  copyToClipboard,
+  broadcastLessonToRoom
 } from '../services/liveLecture';
 import { processDiagramImageForTactile } from '../services/imageEdgeDetector';
 
@@ -127,15 +132,33 @@ export default function TeacherDashboard({
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState(0);
 
-  // Live Class Room & Video Controls State
+  // Live Class Room & Video Controls State (Google Meet Multi-Laptop Hub)
   const [roomCode, setRoomCode] = useState(DEFAULT_ROOM_CODE);
   const [roomPasscode, setRoomPasscode] = useState(DEFAULT_ROOM_PASS);
+  const [networkInfo, setNetworkInfo] = useState(null);
   const [isCameraActive, setIsCameraActive] = useState(true);
   const [isMicActive, setIsMicActive] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedPass, setCopiedPass] = useState(false);
   const [teacherVideoActive, setTeacherVideoActive] = useState(false);
+  const [lessonBroadcastSuccess, setLessonBroadcastSuccess] = useState(false);
+
+  // Fetch host laptop LAN IP for effortless cross-device sharing
+  useEffect(() => {
+    fetchNetworkInfo().then(info => {
+      if (info) setNetworkInfo(info);
+    });
+  }, []);
+
+  const handleBroadcastCurrentLesson = () => {
+    const lessonToShare = lessons.find(l => l.id === currentLessonId) || lessons[0];
+    if (lessonToShare) {
+      broadcastLessonToRoom(lessonToShare, roomCode);
+      setLessonBroadcastSuccess(true);
+      setTimeout(() => setLessonBroadcastSuccess(false), 3000);
+    }
+  };
 
   // Student Doubts & Reply State
   const [replyText, setReplyText] = useState('');
@@ -271,17 +294,23 @@ export default function TeacherDashboard({
     }
   };
 
-  const copyRoomLink = (role = 'deaf') => {
-    const url = `${window.location.origin}?room=${encodeURIComponent(roomCode)}&pass=${encodeURIComponent(roomPasscode)}&role=${role}`;
-    navigator.clipboard.writeText(url);
+  const copyRoomLink = async (role = 'deaf') => {
+    const baseUrl = networkInfo?.teacherUrl || window.location.origin;
+    const url = `${baseUrl}?room=${encodeURIComponent(roomCode)}&role=${role}`;
+    await copyToClipboard(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
-  const copyRoomPass = () => {
-    navigator.clipboard.writeText(roomCode);
+  const copyRoomPass = async () => {
+    await copyToClipboard(roomCode);
     setCopiedPass(true);
     setTimeout(() => setCopiedPass(false), 2500);
+  };
+
+  const handleGenerateNewRoomCode = () => {
+    const newCode = generateMeetRoomCode();
+    setRoomCode(newCode);
   };
 
   // ── File Upload & Ingestion ───────────────────────────────────────────────
@@ -337,6 +366,7 @@ export default function TeacherDashboard({
             data.lesson.bviModule.hapticDiagram.landmarks = extractedImageTactile.landmarks;
           }
           onUploadLesson(data.lesson);
+          broadcastLessonToRoom(data.lesson, roomCode);
         } else {
           // Robust client-side parser fallback
           const newLesson = {
@@ -389,6 +419,7 @@ export default function TeacherDashboard({
             },
           };
           onUploadLesson(newLesson);
+          broadcastLessonToRoom(newLesson, roomCode);
         }
 
         setIsProcessing(false);
@@ -495,7 +526,7 @@ export default function TeacherDashboard({
           {/* Active Classroom Status Card */}
           <div style={{ background: '#18181b', padding: '1.25rem', borderRadius: '20px', border: '1px solid rgba(255, 255, 255, 0.12)', minWidth: '240px', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a1a1aa' }}>Classroom Status</span>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a1a1aa' }}>Active Curriculum</span>
               <span style={{
                 fontSize: '0.6875rem', padding: '0.2rem 0.6rem',
                 background: isLiveLecture ? 'rgba(239, 68, 68, 0.15)' : '#27272a',
@@ -519,6 +550,30 @@ export default function TeacherDashboard({
                 <Copy style={{ width: 12, height: 12 }} /> {copiedPass ? 'Copied' : 'Copy'}
               </button>
             </div>
+
+            <button
+              onClick={handleBroadcastCurrentLesson}
+              style={{
+                marginTop: '0.2rem',
+                padding: '0.45rem 0.85rem',
+                background: lessonBroadcastSuccess ? '#166534' : 'linear-gradient(135deg, #27272a, #3f3f46)',
+                color: lessonBroadcastSuccess ? '#4ade80' : '#ffffff',
+                border: `1px solid ${lessonBroadcastSuccess ? '#4ade80' : 'rgba(255,255,255,0.2)'}`,
+                borderRadius: '10px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.4rem',
+                transition: 'all 0.2s ease'
+              }}
+              title="Broadcast this lesson to all connected Deaf & Blind student laptops"
+            >
+              <Share2 style={{ width: 13, height: 13 }} />
+              {lessonBroadcastSuccess ? '✓ Pushed to All Students!' : '📢 Broadcast Lesson to Students'}
+            </button>
           </div>
         </div>
       </div>
@@ -541,17 +596,45 @@ export default function TeacherDashboard({
             </div>
           </div>
 
-          {/* Room Key & Link Share Bar */}
+          {/* Room Key & Link Share Bar (Google Meet Style Multi-Laptop Connect) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
             <div style={{ background: '#121215', padding: '0.4rem 0.8rem', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem' }}>
               <Key style={{ width: 14, height: 14, color: '#a1a1aa' }} />
-              <span style={{ color: '#a1a1aa' }}>Room Pass:</span>
-              <strong style={{ color: '#ffffff', fontFamily: 'var(--font-mono)' }}>{roomCode}</strong>
+              <span style={{ color: '#a1a1aa' }}>Room Code:</span>
+              <input
+                type="text"
+                value={roomCode}
+                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 800,
+                  fontSize: '0.8125rem',
+                  width: '130px',
+                  outline: 'none'
+                }}
+                title="Enter custom Google Meet style room code or generate new"
+              />
+              <button
+                type="button"
+                onClick={handleGenerateNewRoomCode}
+                title="Generate new Google Meet Room Code"
+                style={{ background: 'none', border: 'none', color: '#a1a1aa', cursor: 'pointer', display: 'inline-flex', padding: 2 }}
+              >
+                <RefreshCw style={{ width: 13, height: 13 }} />
+              </button>
             </div>
 
+            <button onClick={copyRoomPass} className="btn-secondary" style={{ padding: '0.45rem 0.75rem', fontSize: '0.75rem' }}>
+              <Copy style={{ width: 13, height: 13 }} />
+              {copiedPass ? '✓ Code Copied!' : 'Copy Code'}
+            </button>
+
             <button onClick={() => copyRoomLink('deaf')} className="btn-secondary" style={{ padding: '0.45rem 0.9rem', fontSize: '0.75rem' }}>
-              <Link style={{ width: 13, height: 13 }} />
-              {copiedLink ? '✓ Link Copied!' : 'Copy Student Invite Link'}
+              <Laptop style={{ width: 13, height: 13, color: '#38bdf8' }} />
+              {copiedLink ? '✓ Link Copied!' : 'Copy Multi-Laptop Invite Link'}
             </button>
           </div>
         </div>

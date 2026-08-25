@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { subscribeRoomSession, DEFAULT_ROOM_CODE, subscribeToLiveNotifications, followTeacher, unfollowTeacher } from '../services/liveLecture.js';
-import { processDiagramImageForTactile, isCoordinateOnOutline } from '../services/diagramAnalyzer.js';
+import { processDiagramImageForTactile, isCoordinateOnOutline, generateClientFlowchart, generateEdgeMaskFromPaths } from '../services/diagramAnalyzer.js';
 
 export default function BlindModule({ 
   lesson, 
@@ -48,8 +48,15 @@ export default function BlindModule({
 
   const isFollowed = (tid) => Array.isArray(followedTeachers) && !!tid && followedTeachers.includes(tid);
 
-  // Room & Live Lecture Audio Stream State
-  const [studentRoomCode, setStudentRoomCode] = useState(DEFAULT_ROOM_CODE);
+  // Room & Live Lecture Audio Stream State (Multi-Laptop Google Meet Hub)
+  const [studentRoomCode, setStudentRoomCode] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const r = p.get('room');
+      if (r && r.trim()) return r.trim().toUpperCase();
+    } catch (e) {}
+    return DEFAULT_ROOM_CODE;
+  });
   const [isRoomLive, setIsRoomLive] = useState(false);
   const [roomTranscript, setRoomTranscript] = useState("");
   const [isLiveAudioReading, setIsLiveAudioReading] = useState(true);
@@ -121,6 +128,7 @@ export default function BlindModule({
   const lastTapTimeRef = useRef(0);
 
   const canvasRef = useRef(null);
+  const isPointerDownRef = useRef(false);
   const recognitionRef = useRef(null);
   const quizRecognitionRef = useRef(null);
   const notesRecognitionRef = useRef(null);
@@ -329,6 +337,18 @@ export default function BlindModule({
     utterance.onstart = () => setSpokenSubtitle(text);
     window.speechSynthesis.speak(utterance);
   };
+
+  // Automatic Spoken Announcement & Auto-view when Teacher broadcasts/shares a new lesson
+  const lastAnnouncedLessonIdRef = useRef(null);
+  useEffect(() => {
+    if (lesson && lesson.id && lesson.id !== lastAnnouncedLessonIdRef.current) {
+      lastAnnouncedLessonIdRef.current = lesson.id;
+      const title = lesson.title || "New curriculum lesson";
+      const diagTitle = lesson.bviModule?.hapticDiagram?.title || "Tactile Diagram";
+      speakText(`New lesson loaded: ${title}. Tactile diagram for ${diagTitle} is ready on screen. Tap anywhere to explore.`, true);
+      setActiveTab('haptic');
+    }
+  }, [lesson]);
 
   // ── Voice Commands Listener ───────────────────────────────────────────────
   useEffect(() => {
@@ -712,19 +732,49 @@ export default function BlindModule({
 
   const cachedOutlineImgRef = useRef(null);
 
-  // Pre-load outline image when diagram data changes
+  // Pre-load outline image or generate edgeMask from paths
   useEffect(() => {
-    if (diagram.outlineDataUrl) {
+    if (diagram.outlineDataUrl && diagram.edgeMask) {
       const img = new Image();
       img.onload = () => {
         cachedOutlineImgRef.current = img;
         drawCanvas();
       };
       img.src = diagram.outlineDataUrl;
+    } else if (diagram.paths && diagram.paths.length > 0) {
+      try {
+        let gen = null;
+        if (diagram.isFlowchart) {
+          gen = generateClientFlowchart(
+            lesson?.summary || lesson?.title || "",
+            lesson?.concepts || [],
+            diagram.title || lesson?.title || "Curriculum Flowchart",
+            800,
+            600
+          );
+        } else {
+          gen = generateEdgeMaskFromPaths(diagram.paths, 800, 600);
+        }
+
+        if (gen && gen.outlineDataUrl) {
+          diagram.outlineDataUrl = gen.outlineDataUrl;
+          diagram.edgeMask = gen.edgeMask;
+          const img = new Image();
+          img.onload = () => {
+            cachedOutlineImgRef.current = img;
+            drawCanvas();
+          };
+          img.src = gen.outlineDataUrl;
+        }
+      } catch (e) {
+        cachedOutlineImgRef.current = null;
+        drawCanvas();
+      }
     } else {
       cachedOutlineImgRef.current = null;
+      drawCanvas();
     }
-  }, [diagram.outlineDataUrl]);
+  }, [diagram.outlineDataUrl, diagram.paths, diagram.isFlowchart, lesson]);
 
   const drawCanvas = () => {
     if (!canvasRef.current) return;
@@ -750,7 +800,7 @@ export default function BlindModule({
       ctx.stroke();
     }
 
-    // 2. Draw Cached Outline Image or Vector Paths
+    // 2. Draw Cached Outline Image or Vector Paths with high-contrast glow
     if (cachedOutlineImgRef.current) {
       try {
         ctx.drawImage(cachedOutlineImgRef.current, 0, 0, 800, 600);
@@ -758,14 +808,17 @@ export default function BlindModule({
     } else if (diagram.paths && diagram.paths.length > 0) {
       diagram.paths.forEach(p => {
         ctx.save();
-        ctx.lineWidth = p.type === 'boundary' ? 7 : 3.5;
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.setLineDash(p.type === 'inner-wall' ? [10, 6] : []);
+        const isBoundary = p.type === 'boundary';
+        ctx.lineWidth = isBoundary ? 8 : 4.5;
+        ctx.strokeStyle = isBoundary ? '#FFFFFF' : '#34d399';
+        ctx.shadowColor = isBoundary ? 'rgba(255, 255, 255, 0.6)' : 'rgba(52, 211, 153, 0.7)';
+        ctx.shadowBlur = isBoundary ? 10 : 8;
+        ctx.setLineDash(p.type === 'inner-wall' ? [12, 6] : []);
         try {
           const path2d = new Path2D(p.d);
           ctx.stroke(path2d);
         } catch (e) {
-          ctx.strokeRect(200, 150, 400, 300);
+          ctx.strokeRect(120, 120, 560, 360);
         }
         ctx.restore();
       });
@@ -862,45 +915,43 @@ export default function BlindModule({
   // ── Document / PDF / PPT / Voice Upload Processor ─────────────────────────
   const processUploadedContent = (text, fileName = "Uploaded Notes") => {
     setIsProcessingUpload(true);
-    speakText(`Processing ${fileName}. Analyzing structure, generating audio narration chapters and interactive tactile outlines.`, true);
+    speakText(`Processing ${fileName}. Generating audio chapters and interactive concept flowchart.`, true);
 
     setTimeout(() => {
-      const words = text.split(/\s+/).slice(0, 150).join(' ');
+      const flowchartData = generateClientFlowchart(text, [], fileName, 800, 600);
       const generatedBvi = {
-        audioSummary: `Audio Analysis of ${fileName}: ${words.slice(0, 240)}...`,
+        audioSummary: `Audio Analysis of ${fileName}: ${text.slice(0, 240)}...`,
         audioSections: [
           {
             sectionTitle: `Section 1: Overview of ${fileName}`,
             content: text.slice(0, 350) || "Overview of uploaded material."
           },
           {
-            sectionTitle: `Section 2: Key Concepts & Scientific Mechanism`,
+            sectionTitle: `Section 2: Key Concepts & Process Flow`,
             content: text.slice(350, 700) || text.slice(0, 300)
           },
           {
-            sectionTitle: `Section 3: Summary & Study Conclusions`,
+            sectionTitle: `Section 3: Summary & Study Takeaways`,
             content: text.slice(700, 1050) || "Summary and core examination takeaways."
           }
         ],
         hapticDiagram: {
-          title: `Tactile Model: ${fileName}`,
-          paths: [
-            { type: "boundary", d: "M 150,300 C 150,150 300,120 400,200 C 500,120 650,150 650,300 C 650,450 400,560 400,560 C 400,560 150,450 150,300 Z" },
-            { type: "inner-wall", d: "M 400,200 L 400,530" },
-            { type: "inner-wall", d: "M 220,330 L 580,330" }
-          ],
-          landmarks: [
-            { id: "upl-1", name: "Primary Mechanism Region", x: 280, y: 240, radius: 45, audioDescription: `Primary Mechanism from ${fileName}: Core principles and anatomical structures.`, hapticTone: [80, 40, 80] },
-            { id: "upl-2", name: "Secondary Process Flow", x: 280, y: 410, radius: 45, audioDescription: `Secondary Flow: Progression of physiological reactions.`, hapticTone: [80, 40, 80] },
-            { id: "upl-3", name: "Output & Transport Boundary", x: 520, y: 240, radius: 45, audioDescription: `Output region: Transport of nutrients and oxygenated elements.`, hapticTone: [80, 40, 80] },
-            { id: "upl-4", name: "Regulation & Control Center", x: 520, y: 410, radius: 45, audioDescription: `Regulation Center: Maintains pressure equilibrium and feedback cycles.`, hapticTone: [100, 50, 100] }
-          ]
+          id: `flowchart-${Date.now()}`,
+          title: flowchartData.title,
+          summary: flowchartData.summary,
+          outlineDataUrl: flowchartData.outlineDataUrl,
+          edgeMask: flowchartData.edgeMask,
+          paths: flowchartData.paths,
+          landmarks: flowchartData.landmarks,
+          isFlowchart: true
         },
         voiceQuiz: [
           {
             id: `q-up-1`,
-            spokenQuestion: `Based on ${fileName}, what is the main biological or physical concept explained?`,
-            expectedKeywords: text.split(/\s+/).filter(w => w.length > 5).slice(0, 5)
+            spokenQuestion: `Based on ${fileName}, what is the main concept or mechanism explained?`,
+            expectedKeywords: text.split(/\s+/).filter(w => w.length > 4).slice(0, 5),
+            modelAnswer: 'The core topic covers the process steps and mechanism outlined in the lesson.',
+            points: 10
           }
         ]
       };
@@ -908,8 +959,8 @@ export default function BlindModule({
       setCustomBviData(generatedBvi);
       setIsProcessingUpload(false);
       setActiveTab('haptic');
-      speakText(`Study material successfully converted. Haptic diagram and 3 audio narration chapters ready. Touch the surface to explore.`, true);
-    }, 1000);
+      speakText(`Study material successfully converted. Interactive tactile flowchart with 4 stages and 3 audio narration chapters ready. Touch the boxes on screen to explore.`, true);
+    }, 700);
   };
 
   const handleFileUpload = async (e) => {

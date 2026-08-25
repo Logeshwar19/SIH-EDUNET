@@ -286,3 +286,297 @@ export function isCoordinateOnOutline(x, y, edgeMask, width = 800, height = 600)
   if (rx < 0 || rx >= width || ry < 0 || ry >= height) return false;
   return edgeMask[ry * width + rx] === 1;
 }
+
+/**
+ * Generates high-contrast outline image and dilated edge mask from vector paths.
+ */
+export function generateEdgeMaskFromPaths(paths = [], targetW = 800, targetH = 600) {
+  if (typeof document === 'undefined') {
+    return { outlineDataUrl: null, edgeMask: new Uint8Array(targetW * targetH) };
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  ctx.fillStyle = '#09090b';
+  ctx.fillRect(0, 0, targetW, targetH);
+
+  paths.forEach(p => {
+    ctx.save();
+    ctx.lineWidth = p.type === 'boundary' ? 8 : 5;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.shadowColor = '#34d399';
+    ctx.shadowBlur = 6;
+    ctx.setLineDash(p.type === 'inner-wall' ? [12, 6] : []);
+    try {
+      const path2d = new Path2D(p.d);
+      ctx.stroke(path2d);
+    } catch (e) {
+      ctx.strokeRect(150, 150, 500, 300);
+    }
+    ctx.restore();
+  });
+
+  const outlineDataUrl = canvas.toDataURL('image/png');
+  const edgeMask = new Uint8Array(targetW * targetH);
+
+  try {
+    const raw = ctx.getImageData(0, 0, targetW, targetH).data;
+    const rawMask = new Uint8Array(targetW * targetH);
+    for (let i = 0; i < targetW * targetH; i++) {
+      const r = raw[i * 4];
+      const g = raw[i * 4 + 1];
+      const b = raw[i * 4 + 2];
+      if (r > 50 || g > 50 || b > 50) {
+        rawMask[i] = 1;
+      }
+    }
+
+    // Dilate 10px so touching anywhere along the path line triggers vibration easily
+    const D = 10;
+    for (let y = 0; y < targetH; y++) {
+      for (let x = 0; x < targetW; x++) {
+        if (rawMask[y * targetW + x] === 1) {
+          for (let dy = -D; dy <= D; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= targetH) continue;
+            for (let dx = -D; dx <= D; dx++) {
+              const nx = x + dx;
+              if (nx < 0 || nx >= targetW) continue;
+              if (dx * dx + dy * dy <= D * D) {
+                edgeMask[ny * targetW + nx] = 1;
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[DiagramAnalyzer] generateEdgeMaskFromPaths mask error:', e);
+  }
+
+  return { outlineDataUrl, edgeMask };
+}
+
+/**
+ * Generates an interactive tactile flowchart with edgeMask and outlineDataUrl for touch vibration.
+ */
+export function generateClientFlowchart(text = "", concepts = [], title = "Curriculum Flowchart", targetW = 800, targetH = 600) {
+  const steps = [];
+
+  if (concepts && concepts.length >= 3) {
+    concepts.slice(0, 4).forEach((c, idx) => {
+      const word = c.word || (typeof c === 'string' ? c : `Stage ${idx + 1}`);
+      const desc = c.description || (c.definitionKeywords ? `Related to ${c.definitionKeywords.join(', ')}.` : `Core mechanism in ${title}.`);
+      steps.push({
+        title: `Step ${idx + 1}: ${word}`,
+        description: `Stage ${idx + 1} of 4: ${word}. ${desc}`,
+        concept: word
+      });
+    });
+  } else if (text && text.trim().length > 20) {
+    const rawBlocks = text.split(/\n+|\.\s+/).filter(s => s.trim().length > 10);
+    const chosen = rawBlocks.slice(0, 4);
+    if (chosen.length >= 2) {
+      chosen.forEach((b, idx) => {
+        steps.push({
+          title: `Step ${idx + 1}: ${b.slice(0, 24)}…`,
+          description: `Stage ${idx + 1} of 4: ${b}`,
+          concept: `Stage ${idx + 1}`
+        });
+      });
+    }
+  }
+
+  // Fallback 4-stage scientific flowchart
+  if (steps.length < 4) {
+    const defaultSteps = [
+      { title: 'Step 1: Input & Ingestion', description: 'Step 1 of 4: Ingestion of initial substances, energy sources, or baseline principles.', concept: 'Input' },
+      { title: 'Step 2: Core Reaction & Processing', description: 'Step 2 of 4: Primary interaction, catalytic conversion, or functional processing.', concept: 'Mechanism' },
+      { title: 'Step 3: Pathway & Transformation', description: 'Step 3 of 4: Progression of intermediate states and internal transport pathways.', concept: 'Pathway' },
+      { title: 'Step 4: Output & Result State', description: 'Step 4 of 4: Final synthesized products, balanced equilibrium, or system outputs.', concept: 'Output' }
+    ];
+    while (steps.length < 4) {
+      steps.push(defaultSteps[steps.length]);
+    }
+  }
+
+  const boxPositions = [
+    { x: 80, y: 110, w: 250, h: 130, centerX: 205, centerY: 175 },
+    { x: 470, y: 110, w: 250, h: 130, centerX: 595, centerY: 175 },
+    { x: 470, y: 360, w: 250, h: 130, centerX: 595, centerY: 425 },
+    { x: 80, y: 360, w: 250, h: 130, centerX: 205, centerY: 425 }
+  ];
+
+  // Draw Flowchart onto an offscreen canvas to generate outlineDataUrl & edgeMask
+  let outlineDataUrl = null;
+  let edgeMask = new Uint8Array(targetW * targetH);
+
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    ctx.fillStyle = '#09090b';
+    ctx.fillRect(0, 0, targetW, targetH);
+
+    // Draw 4 rounded boxes with white stroke
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 6;
+    ctx.fillStyle = '#18181b';
+
+    boxPositions.forEach((pos, idx) => {
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(pos.x, pos.y, pos.w, pos.h, 18);
+      } else {
+        ctx.rect(pos.x, pos.y, pos.w, pos.h);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      // Inner dashed accent
+      ctx.save();
+      ctx.strokeStyle = 'rgba(52, 211, 153, 0.6)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(pos.x + 8, pos.y + 8, pos.w - 16, pos.h - 16, 12);
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      // Step Header Text
+      ctx.fillStyle = '#34d399';
+      ctx.font = 'bold 13px Manrope, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`STAGE ${idx + 1}`, pos.centerX, pos.y + 32);
+
+      // Title Text
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 14px Manrope, sans-serif';
+      const label = (steps[idx]?.title || `Step ${idx + 1}`).split(':')[1]?.trim() || steps[idx]?.title;
+      ctx.fillText(label.slice(0, 22), pos.centerX, pos.y + 60);
+    });
+
+    // Draw Connecting Directional Arrows
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 6;
+    ctx.fillStyle = '#FFFFFF';
+
+    // Arrow 1: Box 1 -> Box 2 (Right)
+    ctx.beginPath();
+    ctx.moveTo(330, 175);
+    ctx.lineTo(470, 175);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(470, 175);
+    ctx.lineTo(450, 163);
+    ctx.lineTo(450, 187);
+    ctx.closePath();
+    ctx.fill();
+
+    // Arrow 2: Box 2 -> Box 3 (Down)
+    ctx.beginPath();
+    ctx.moveTo(595, 240);
+    ctx.lineTo(595, 360);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(595, 360);
+    ctx.lineTo(583, 340);
+    ctx.lineTo(607, 340);
+    ctx.closePath();
+    ctx.fill();
+
+    // Arrow 3: Box 3 -> Box 4 (Left)
+    ctx.beginPath();
+    ctx.moveTo(470, 425);
+    ctx.lineTo(330, 425);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(330, 425);
+    ctx.lineTo(350, 413);
+    ctx.lineTo(350, 437);
+    ctx.closePath();
+    ctx.fill();
+
+    outlineDataUrl = canvas.toDataURL('image/png');
+
+    // Extract edgeMask with dilation
+    try {
+      const raw = ctx.getImageData(0, 0, targetW, targetH).data;
+      const rawMask = new Uint8Array(targetW * targetH);
+      for (let i = 0; i < targetW * targetH; i++) {
+        const r = raw[i * 4];
+        const g = raw[i * 4 + 1];
+        const b = raw[i * 4 + 2];
+        if (r > 60 || g > 60 || b > 60) {
+          rawMask[i] = 1;
+        }
+      }
+
+      // Dilate 8px so sliding finger on lines triggers vibration easily
+      const D = 8;
+      for (let y = 0; y < targetH; y++) {
+        for (let x = 0; x < targetW; x++) {
+          if (rawMask[y * targetW + x] === 1) {
+            for (let dy = -D; dy <= D; dy++) {
+              const ny = y + dy;
+              if (ny < 0 || ny >= targetH) continue;
+              for (let dx = -D; dx <= D; dx++) {
+                const nx = x + dx;
+                if (nx < 0 || nx >= targetW) continue;
+                if (dx * dx + dy * dy <= D * D) {
+                  edgeMask[ny * targetW + nx] = 1;
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Flowchart] edgeMask creation:', e);
+    }
+  }
+
+  const paths = [
+    { id: 'box-1', name: steps[0]?.title || 'Step 1', type: 'boundary', d: 'M 80,110 L 330,110 L 330,240 L 80,240 Z', vibrationPattern: [50, 30] },
+    { id: 'box-2', name: steps[1]?.title || 'Step 2', type: 'boundary', d: 'M 470,110 L 720,110 L 720,240 L 470,240 Z', vibrationPattern: [50, 30] },
+    { id: 'box-3', name: steps[2]?.title || 'Step 3', type: 'boundary', d: 'M 470,360 L 720,360 L 720,490 L 470,490 Z', vibrationPattern: [50, 30] },
+    { id: 'box-4', name: steps[3]?.title || 'Step 4', type: 'boundary', d: 'M 80,360 L 330,360 L 330,490 L 80,490 Z', vibrationPattern: [50, 30] },
+    { id: 'arrow-1-2', name: 'Flow 1 to 2', type: 'inner-wall', d: 'M 330,175 L 470,175', vibrationPattern: [30, 20] },
+    { id: 'arrow-2-3', name: 'Flow 2 to 3', type: 'inner-wall', d: 'M 595,240 L 595,360', vibrationPattern: [30, 20] },
+    { id: 'arrow-3-4', name: 'Flow 3 to 4', type: 'inner-wall', d: 'M 470,425 L 330,425', vibrationPattern: [30, 20] }
+  ];
+
+  const landmarks = steps.map((s, idx) => {
+    const pos = boxPositions[idx] || boxPositions[0];
+    return {
+      id: `flow-step-${idx + 1}`,
+      name: s.title,
+      x: pos.centerX,
+      y: pos.centerY,
+      radius: 52,
+      audioDescription: `${s.description} Slide your finger along the connector to proceed to the next stage.`,
+      hapticTone: [90, 45, 90],
+      isFlowchartStep: true,
+      stepNumber: idx + 1
+    };
+  });
+
+  return {
+    title: `Tactile Flowchart: ${title}`,
+    summary: `Interactive Concept Flowchart generated for ${title}. Slide your finger across the 4 process boxes and connecting arrows to feel vibrations and listen to each stage.`,
+    outlineDataUrl,
+    edgeMask,
+    landmarks,
+    paths,
+    isFlowchart: true,
+    width: targetW,
+    height: targetH
+  };
+}

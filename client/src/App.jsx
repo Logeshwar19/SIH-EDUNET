@@ -11,7 +11,8 @@ import {
   stopLectureRecording,
   broadcastTeacherReply,
   subscribeLecture,
-  sentenceToISLGlosses
+  sentenceToISLGlosses,
+  sendStudentQuestionViaWS
 } from './services/liveLecture';
 
 // Robust Error Boundary to prevent black screens
@@ -210,22 +211,65 @@ export default function App() {
     }
   };
 
+  // Real-time Student Doubts Synchronization across devices
+  useEffect(() => {
+    const handleIncomingDoubt = (e) => {
+      if (e.detail) {
+        const doubtMsg = {
+          id: e.detail.id || `msg-${Date.now()}`,
+          studentName: e.detail.studentName || "Student Doubt",
+          message: e.detail.message || e.detail.recognizedSignText || "",
+          timestamp: new Date().toISOString()
+        };
+        setInboxMessages(prev => [doubtMsg, ...prev]);
+      }
+    };
+    window.addEventListener('inclusiveai-student-doubt', handleIncomingDoubt);
+    return () => window.removeEventListener('inclusiveai-student-doubt', handleIncomingDoubt);
+  }, []);
+
   const handleSendMessageToTeacher = ({ studentName, recognizedSignText }) => {
+    const senderName = studentName || currentUser?.name || "Rohan Patel (Deaf Student)";
     const newMsg = {
       id: `msg-${Date.now()}`,
-      studentName: studentName || currentUser?.name || "Student Doubt",
+      studentName: senderName,
       message: recognizedSignText,
       timestamp: new Date().toISOString()
     };
 
     setInboxMessages(prev => [newMsg, ...prev]);
 
+    // Send doubt in real-time over WebSocket to Teacher on any laptop
+    sendStudentQuestionViaWS({
+      studentId: currentUser?.id || 'student-rohan',
+      studentName: senderName,
+      message: recognizedSignText,
+      doubtType: 'sign_to_text'
+    });
+
     fetch('/api/sign-to-text/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentName: newMsg.studentName, recognizedSignText })
+      body: JSON.stringify({ studentName: senderName, recognizedSignText })
     }).catch(() => {});
   };
+
+  const [sharedLessonAlert, setSharedLessonAlert] = useState(null);
+
+  // Real-time Shared Lesson Broadcast from Teacher to Students
+  useEffect(() => {
+    const handleIncomingLesson = (e) => {
+      if (e.detail?.lesson) {
+        const incomingLesson = e.detail.lesson;
+        setLessons(prev => [incomingLesson, ...prev.filter(l => l.id !== incomingLesson.id)]);
+        setCurrentLessonId(incomingLesson.id);
+        setSharedLessonAlert(incomingLesson);
+        setTimeout(() => setSharedLessonAlert(null), 10000);
+      }
+    };
+    window.addEventListener('inclusiveai-lesson-shared', handleIncomingLesson);
+    return () => window.removeEventListener('inclusiveai-lesson-shared', handleIncomingLesson);
+  }, []);
 
   const handleAuthSuccess = (profile) => {
     setCurrentUser(profile);
@@ -243,6 +287,79 @@ export default function App() {
 
   return (
     <div style={{ position: 'relative', minHeight: '100vh', zIndex: 1 }}>
+      {/* Real-Time Teacher Shared Lesson Alert Banner */}
+      {sharedLessonAlert && (
+        <div style={{
+          maxWidth: '82rem',
+          margin: '0.75rem auto 0 auto',
+          padding: '0 1rem'
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #18181b, #27272a)',
+            border: '1px solid rgba(52, 211, 153, 0.4)',
+            borderRadius: '16px',
+            padding: '0.85rem 1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            flexWrap: 'wrap',
+            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)',
+            animation: 'fadeIn 0.3s ease'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <span style={{ fontSize: '1.5rem' }}>📚</span>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.6875rem', fontWeight: 800, background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', padding: '0.15rem 0.5rem', borderRadius: '6px' }}>
+                    TEACHER SHARED CURRICULUM
+                  </span>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 800, color: '#ffffff' }}>
+                    {sharedLessonAlert.title}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: '0.15rem 0 0 0' }}>
+                  Multi-modal conversion complete: ISL Sign Gestures (Deaf) and Voice Chapters & Haptics (Blind) ready!
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                onClick={() => {
+                  setCurrentLessonId(sharedLessonAlert.id);
+                  setSharedLessonAlert(null);
+                }}
+                style={{
+                  padding: '0.45rem 1rem',
+                  background: '#ffffff',
+                  color: '#09090b',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontSize: '0.75rem',
+                  fontWeight: 800,
+                  cursor: 'pointer'
+                }}
+              >
+                Explore Lesson Now →
+              </button>
+              <button
+                onClick={() => setSharedLessonAlert(null)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#a1a1aa',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Universal Navbar with Profile & Role Tabs */}
       <Navbar
         activeTab={activeTab}

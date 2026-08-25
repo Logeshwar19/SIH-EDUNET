@@ -8,7 +8,9 @@
     "dev:client": "npm --prefix client run dev",
     "dev:server": "npm --prefix server run dev",
     "build": "npm --prefix client run build",
-    "start": "npm --prefix server start"
+    "host": "npm --prefix client run build && node server/index.js",
+    "all-in-one": "npm --prefix client run build && node server/index.js",
+    "start": "node server/index.js"
   },
   "keywords": ["sih", "inclusive-education", "accessibility", "isl", "haptics", "mediapipe", "speech-api"],
   "author": "SIH Team",

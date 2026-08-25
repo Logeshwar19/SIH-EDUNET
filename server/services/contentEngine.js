@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { createRequire } from 'module';
-import { DIAGRAM_LIBRARY } from './diagramLibrary.js';
+import { DIAGRAM_LIBRARY, generateFlowchartDiagram } from './diagramLibrary.js';
 import { EDU_VOCAB } from './signVocabulary.js';
 
 const require = createRequire(import.meta.url);
@@ -113,12 +113,16 @@ export async function processLesson(file, rawTextInput) {
 
   const text_blocks = splitIntoBlocks(rawText);
   const concepts = extractConcepts(text_blocks);
-  const diagrams = detectDiagrams(text_blocks);
+  let diagrams = detectDiagrams(text_blocks);
+  const lessonTitle = fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
+  if (!diagrams || diagrams.length === 0) {
+    diagrams = [generateFlowchartDiagram(text_blocks, concepts, lessonTitle)];
+  }
   const quiz_items = generateQuiz(text_blocks, concepts);
 
   return {
     id: `lesson_${Date.now()}`,
-    title: fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' '),
+    title: lessonTitle,
     originalFileName: fileName,
     rawText: rawText.slice(0, 600),
     text_blocks,

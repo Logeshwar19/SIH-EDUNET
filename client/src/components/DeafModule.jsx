@@ -49,7 +49,11 @@ export default function DeafModule({
   liveLectureTranscript,
   liveTeacherReply,
 }) {
-  const [activeTab, setActiveTab] = useState('live_lecture'); // 'live_lecture', 'text_to_sign', 'sign_to_text', 'quiz'
+  const [activeTab, setActiveTab] = useState('curriculum_isl'); // 'curriculum_isl', 'live_lecture', 'text_to_sign', 'sign_to_text', 'quiz'
+
+  // ── Curriculum Lesson & ISL Breakdown State ──
+  const [selectedCurriculumConcept, setSelectedCurriculumConcept] = useState(null);
+  const [curriculumSignText, setCurriculumSignText] = useState('');
 
   // ── Live Notification State ──
   const [liveNotification, setLiveNotification] = useState(null); // { teacherId, teacherName, roomCode, lessonTitle }
@@ -65,8 +69,15 @@ export default function DeafModule({
 
   const isFollowed = (tid) => Array.isArray(followedTeachers) && !!tid && followedTeachers.includes(tid);
 
-  // Room & Live Teacher Streaming State
-  const [studentRoomCode, setStudentRoomCode] = useState(DEFAULT_ROOM_CODE);
+  // Room & Live Teacher Streaming State (Multi-Laptop Google Meet Hub)
+  const [studentRoomCode, setStudentRoomCode] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const r = p.get('room');
+      if (r && r.trim()) return r.trim().toUpperCase();
+    } catch (e) {}
+    return DEFAULT_ROOM_CODE;
+  });
   const [isRoomConnected, setIsRoomConnected] = useState(true);
   const [teacherLiveVideoFrame, setTeacherLiveVideoFrame] = useState(null);
   const [isRoomBroadcastLive, setIsRoomBroadcastLive] = useState(false);
@@ -564,6 +575,7 @@ export default function DeafModule({
   };
 
   const TABS = [
+    { id: 'curriculum_isl', label: '📖 PPT/PDF Curriculum & ISL', icon: BookOpen },
     { id: 'live_lecture', label: '● Live Class Broadcast', icon: Radio },
     { id: 'text_to_sign', label: 'Text → Sign Engine', icon: Type },
     { id: 'sign_to_text', label: 'Sign → Text & Doubt AI', icon: Camera },
@@ -737,6 +749,191 @@ export default function DeafModule({
         </div>
       )}
 
+      {/* ─── TAB 0: UPLOADED PPT / PDF CURRICULUM & ISL CONCEPT BREAKDOWN ───── */}
+      {activeTab === 'curriculum_isl' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          
+          {/* Lesson Header Banner */}
+          <div className="ref-card" style={{ padding: '1.75rem', background: 'linear-gradient(135deg, #18181b 0%, #1c1917 100%)', border: '1px solid rgba(255, 255, 255, 0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+              <div style={{ maxWidth: '44rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.6875rem', fontWeight: 800, background: 'rgba(52, 211, 153, 0.15)', color: '#34d399', padding: '0.2rem 0.6rem', borderRadius: '6px', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                    TEACHER'S CURRICULUM PPT/PDF
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>
+                    📁 {lesson?.originalFileName || 'Lesson_Notes.pdf'}
+                  </span>
+                </div>
+
+                <h2 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#ffffff', margin: '0 0 0.5rem 0' }}>
+                  {lesson?.title || 'Class 10 Science - Human Heart Anatomy'}
+                </h2>
+                <p style={{ fontSize: '0.875rem', color: '#d4d4d8', lineHeight: 1.6, margin: 0 }}>
+                  {lesson?.summary || 'Curriculum extracted from uploaded lecture material. All scientific definitions and mechanisms have been converted to Indian Sign Language (ISL) gestures and visual breakdowns.'}
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: '180px' }}>
+                <button
+                  onClick={() => {
+                    const fullTxt = (lesson?.text_blocks || []).join(' ') || lesson?.summary || lesson?.title || '';
+                    setCurriculumSignText(fullTxt.slice(0, 250));
+                  }}
+                  className="btn-primary"
+                  style={{ padding: '0.6rem 1rem', fontSize: '0.75rem', justifyContent: 'center' }}
+                >
+                  <Play style={{ width: 14, height: 14 }} /> Play Full Lesson Signs
+                </button>
+                <div style={{ fontSize: '0.75rem', color: '#a1a1aa', textAlign: 'center' }}>
+                  Subject: <strong style={{ color: '#ffffff' }}>{lesson?.subject || 'Science'}</strong> • {lesson?.grade || 'Grade 10'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Dual Column: Concepts & ISL Sign Visualizer */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem' }}>
+            
+            {/* Left: Extracted Concepts from PPT/PDF */}
+            <div className="ref-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Layers style={{ width: 18, height: 18, color: '#34d399' }} />
+                  <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                    Extracted Scientific Concepts ({(lesson?.islModule?.lessonGlosses || lesson?.concepts || []).length || 4})
+                  </h3>
+                </div>
+                <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>Click concept to see 3D ISL sign</span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '520px', overflowY: 'auto' }}>
+                {((lesson?.islModule?.lessonGlosses && lesson.islModule.lessonGlosses.length > 0)
+                  ? lesson.islModule.lessonGlosses
+                  : (lesson?.concepts && lesson.concepts.length > 0)
+                  ? lesson.concepts.map(c => typeof c === 'string' ? { word: c, gloss: c.toUpperCase() } : c)
+                  : [
+                    { word: 'HEART', gloss: 'HEART / BLOOD PUMP', description: 'Cup hand over left chest and tap twice mimicking heartbeat.' },
+                    { word: 'PHOTOSYNTHESIS', gloss: 'PLANT + SUN + FOOD MAKE', description: 'Sign plant sprouting, touch sun overhead, gesture eating/energy.' },
+                    { word: 'CELL', gloss: 'CELL / INNER STRUCTURE', description: 'Form interlocking circle handshapes.' },
+                    { word: 'SCIENCE', gloss: 'SCIENCE / EXPERIMENT', description: 'Alternating downward circular motion with fists as if pouring beakers.' }
+                  ]
+                ).map((item, idx) => {
+                  const word = item.word || (typeof item === 'string' ? item : 'Concept');
+                  const gloss = item.gloss || word.toUpperCase();
+                  const desc = item.description || `Indian Sign Language gesture for ${word}`;
+                  const tamil = translateISLToTamil(word);
+                  const isSelected = (curriculumSignText === word) || (selectedCurriculumConcept === word);
+
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        setSelectedCurriculumConcept(word);
+                        setCurriculumSignText(word);
+                      }}
+                      style={{
+                        padding: '1rem',
+                        borderRadius: '16px',
+                        background: isSelected ? '#27272a' : '#121215',
+                        border: `1px solid ${isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.1)'}`,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.4rem'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#ffffff' }}>
+                            {word}
+                          </span>
+                          <span style={{ fontSize: '0.6875rem', fontWeight: 800, background: '#3f3f46', color: '#e4e4e7', padding: '0.15rem 0.5rem', borderRadius: '6px', fontFamily: 'monospace' }}>
+                            {gloss}
+                          </span>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedCurriculumConcept(word);
+                            setCurriculumSignText(word);
+                          }}
+                          style={{
+                            padding: '0.25rem 0.6rem',
+                            background: isSelected ? '#ffffff' : '#27272a',
+                            color: isSelected ? '#09090b' : '#ffffff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '0.6875rem',
+                            fontWeight: 800,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ▶ Animate Sign
+                        </button>
+                      </div>
+
+                      {tamil && (
+                        <div style={{ fontSize: '0.75rem', color: '#34d399', fontWeight: 600 }}>
+                          🇮🇳 தமிழ்: {tamil}
+                        </div>
+                      )}
+
+                      <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0, lineHeight: 1.4 }}>
+                        {desc}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right: Interactive 3D Sign Visualizer */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <SignVisualizer
+                text={curriculumSignText || (lesson?.islModule?.lessonGlosses?.[0]?.word || lesson?.concepts?.[0]?.word || 'HEART')}
+                speed={1.0}
+              />
+
+              {/* Step-by-Step Lesson Paragraph Reader */}
+              {(lesson?.text_blocks || []).length > 0 && (
+                <div className="ref-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <BookOpen style={{ width: 16, height: 16, color: '#ffffff' }} />
+                    <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff' }}>
+                      Slide Text Paragraphs (Click to Convert to Signs):
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto' }}>
+                    {lesson.text_blocks.map((block, bIdx) => (
+                      <div
+                        key={bIdx}
+                        onClick={() => setCurriculumSignText(block.slice(0, 200))}
+                        style={{
+                          padding: '0.6rem 0.85rem',
+                          borderRadius: '10px',
+                          background: '#121215',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          fontSize: '0.75rem',
+                          color: '#d4d4d8',
+                          cursor: 'pointer',
+                          lineHeight: 1.4
+                        }}
+                      >
+                        <strong>Slide Section {bIdx + 1}:</strong> {block}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* ─── TAB 1: LIVE CLASSROOM BROADCAST (Live Teacher Video & ISL Sign Stream) ───── */}
       {activeTab === 'live_lecture' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -766,7 +963,7 @@ export default function DeafModule({
             </div>
           )}
           
-          {/* Room Join & Connection Bar */}
+          {/* Room Join & Connection Bar (Google Meet Style Multi-Device Hub) */}
           <div className="ref-card" style={{ padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <div style={{ width: 36, height: 36, borderRadius: '10px', background: '#27272a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
@@ -777,25 +974,46 @@ export default function DeafModule({
                   Live Class Stream • Google Meet Room
                 </h4>
                 <p style={{ margin: 0, fontSize: '0.75rem', color: '#a1a1aa' }}>
-                  {(isRoomBroadcastLive || isLiveLecture) ? '🟢 Connected to live classroom broadcast' : 'Awaiting teacher to start live video class'}
+                  {(isRoomBroadcastLive || isLiveLecture) ? `🟢 Connected to live stream in room ${studentRoomCode}` : `Connected to room ${studentRoomCode} (Awaiting Teacher Broadcast)`}
                 </p>
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <div style={{ background: '#121215', padding: '0.35rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem' }}>
+                <span style={{ color: '#a1a1aa' }}>Room:</span>
+                <input
+                  type="text"
+                  value={studentRoomCode}
+                  onChange={(e) => setStudentRoomCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. ROOM-SIH-2026"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#ffffff',
+                    fontFamily: 'var(--font-mono)',
+                    fontWeight: 800,
+                    fontSize: '0.8125rem',
+                    width: '135px',
+                    outline: 'none'
+                  }}
+                  title="Change room code to connect to teacher's laptop"
+                />
+              </div>
+
               <span style={{
                 fontSize: '0.75rem',
                 fontWeight: 800,
                 padding: '0.35rem 0.85rem',
                 borderRadius: '9999px',
-                background: (isRoomBroadcastLive || isLiveLecture) ? 'rgba(52, 211, 153, 0.15)' : '#27272a',
-                color: (isRoomBroadcastLive || isLiveLecture) ? '#34d399' : '#a1a1aa',
-                border: (isRoomBroadcastLive || isLiveLecture) ? '1px solid rgba(52, 211, 153, 0.4)' : '1px solid rgba(255, 255, 255, 0.12)',
+                background: (isRoomBroadcastLive || isLiveLecture) ? 'rgba(239, 68, 68, 0.15)' : 'rgba(52, 211, 153, 0.15)',
+                color: (isRoomBroadcastLive || isLiveLecture) ? '#f87171' : '#34d399',
+                border: (isRoomBroadcastLive || isLiveLecture) ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(52, 211, 153, 0.4)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.4rem'
               }}>
-                {(isRoomBroadcastLive || isLiveLecture) ? '🔴 AUTO-JOINED LIVE CLASS' : '● SYNCED TO TEACHER ROOM'}
+                {(isRoomBroadcastLive || isLiveLecture) ? '🔴 ON AIR STREAM' : '🟢 HUB SYNCED'}
               </span>
             </div>
           </div>
@@ -989,27 +1207,30 @@ export default function DeafModule({
                   📖 Select Teacher's Slide Concepts to Generate Signs:
                 </span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                  {lesson.concepts.map((concept, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => {
-                        setInputTextForSign(concept);
-                        setActiveSignText(concept);
-                      }}
-                      style={{
-                        padding: '0.35rem 0.75rem',
-                        background: activeSignText === concept ? '#ffffff' : '#1f1f23',
-                        color: activeSignText === concept ? '#09090b' : '#d4d4d8',
-                        border: '1px solid rgba(255, 255, 255, 0.15)',
-                        borderRadius: '999px',
-                        fontSize: '0.75rem',
-                        fontWeight: 700,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {concept}
-                    </button>
-                  ))}
+                  {lesson.concepts.map((concept, idx) => {
+                    const cWord = typeof concept === 'string' ? concept : (concept.word || concept.token || 'Concept');
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          setInputTextForSign(cWord);
+                          setActiveSignText(cWord);
+                        }}
+                        style={{
+                          padding: '0.35rem 0.75rem',
+                          background: activeSignText === cWord ? '#ffffff' : '#1f1f23',
+                          color: activeSignText === cWord ? '#09090b' : '#d4d4d8',
+                          border: '1px solid rgba(255, 255, 255, 0.15)',
+                          borderRadius: '999px',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {cWord}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
