@@ -1483,6 +1483,31 @@ export default function BlindModule({
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                 <button
                   onClick={() => {
+                    const title = diagram.title || "Diagram Analysis";
+                    const summary = bviData.audioSummary || "Tactile diagram loaded. Move your finger across outlines and inlines to feel vibration.";
+                    speakText(`${title}. ${summary}`, true);
+                  }}
+                  style={{
+                    padding: '0.35rem 0.75rem',
+                    background: 'rgba(52, 211, 153, 0.15)',
+                    color: '#34d399',
+                    border: '1px solid #10b981',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem'
+                  }}
+                  title="Speak the full diagram overview and explanation aloud"
+                >
+                  <Volume2 style={{ width: 14, height: 14 }} />
+                  <span>📢 Explain Diagram</span>
+                </button>
+
+                <button
+                  onClick={() => {
                     initAudioHaptics();
                     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
                       audioCtxRef.current.resume().catch(() => {});
