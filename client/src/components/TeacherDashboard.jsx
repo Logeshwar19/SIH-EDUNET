@@ -319,12 +319,32 @@ export default function TeacherDashboard({
     }
   };
 
+  const getInviteUrl = (role = 'deaf') => {
+    let baseUrl = networkInfo?.teacherUrl;
+    if (!baseUrl || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+      if (networkInfo?.ip && networkInfo.ip !== 'localhost' && networkInfo.ip !== '127.0.0.1') {
+        baseUrl = `http://${networkInfo.ip}:5173`;
+      } else if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        baseUrl = window.location.origin;
+      } else {
+        baseUrl = `http://${networkInfo?.ip || '10.20.25.26'}:5173`;
+      }
+    }
+    return `${baseUrl}?room=${encodeURIComponent(roomCode)}&role=${role}`;
+  };
+
   const copyRoomLink = async (role = 'deaf') => {
-    const baseUrl = networkInfo?.teacherUrl || window.location.origin;
-    const url = `${baseUrl}?room=${encodeURIComponent(roomCode)}&role=${role}`;
+    const url = getInviteUrl(role);
     await copyToClipboard(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const handleShareWhatsApp = (role = 'deaf') => {
+    const url = getInviteUrl(role);
+    const text = `🎓 *Join InclusiveAI Live Classroom!*\n\n👨‍🏫 *Teacher:* ${teacherName} (${teacherSubject})\n🔑 *Room Code:* ${roomCode}\n\n👉 *Click here to join on your laptop/phone:*\n${url}`;
+    const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    window.open(waUrl, '_blank');
   };
 
   const copyRoomPass = async () => {
@@ -665,7 +685,30 @@ export default function TeacherDashboard({
 
             <button onClick={() => copyRoomLink('deaf')} className="btn-secondary" style={{ padding: '0.45rem 0.9rem', fontSize: '0.75rem' }}>
               <Laptop style={{ width: 13, height: 13, color: '#38bdf8' }} />
-              {copiedLink ? '✓ Link Copied!' : 'Copy Multi-Laptop Invite Link'}
+              {copiedLink ? '✓ Link Copied!' : 'Copy Invite Link'}
+            </button>
+
+            <button
+              onClick={() => handleShareWhatsApp('deaf')}
+              style={{
+                padding: '0.45rem 0.9rem',
+                background: '#16a34a',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '10px',
+                fontSize: '0.75rem',
+                fontWeight: 800,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                boxShadow: '0 4px 14px rgba(22, 163, 74, 0.35)',
+                transition: 'all 0.2s'
+              }}
+              title="Share classroom join link on WhatsApp"
+            >
+              <Share2 style={{ width: 13, height: 13 }} />
+              Share WhatsApp
             </button>
           </div>
         </div>

@@ -67,6 +67,11 @@ export default function App() {
   const [defaultRoleOnAuth, setDefaultRoleOnAuth] = useState('teacher');
   const [activeTab, setActiveTab] = useState(() => {
     try {
+      const p = new URLSearchParams(window.location.search);
+      const r = p.get('role');
+      if (r === 'deaf' || r === 'blind' || r === 'teacher') return r;
+    } catch {}
+    try {
       const saved = localStorage.getItem('inclusiveai_current_user') || localStorage.getItem('inclusiveai_user_auth');
       if (saved) {
         const u = JSON.parse(saved);
@@ -104,9 +109,10 @@ export default function App() {
       const roleParam = params.get('role');
       if (roleParam === 'deaf' || roleParam === 'blind' || roleParam === 'teacher') {
         setDefaultRoleOnAuth(roleParam);
+        setActiveTab(roleParam);
       }
     } catch (e) {}
-  }, [currentUser]);
+  }, []);
 
   // ── Live Lecture Controls ───────────────────────────────────────────────────
   const handleStartLiveLecture = useCallback(() => {
