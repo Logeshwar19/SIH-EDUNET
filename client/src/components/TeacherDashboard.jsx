@@ -47,6 +47,7 @@ import {
   getTeacherProfile,
   broadcastLiveSpeechText
 } from '../services/liveLecture';
+import { processDiagramImageForTactile } from '../services/imageEdgeDetector';
 
 const STAGE_LABELS = [
   '',
@@ -82,27 +83,40 @@ export default function TeacherDashboard({
   const [teacherEmail, setTeacherEmail] = useState(() => {
     try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_email') || '"teacher@school.edu.in"'); } catch { return 'teacher@school.edu.in'; }
   });
+  const [customTeacherId, setCustomTeacherId] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_id') || '"TCH-BIO101"'); } catch { return 'TCH-BIO101'; }
+  });
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
+  const [copiedTeacherId, setCopiedTeacherId] = useState(false);
 
-  // Compute Teacher ID from name (deterministic)
-  const teacherId = generateTeacherID(teacherName);
+  // Active Teacher ID
+  const teacherId = customTeacherId || generateTeacherID(teacherName);
 
   const getTeacherProfileObj = () => ({
     id: teacherId,
     name: teacherName,
     subject: teacherSubject,
     email: teacherEmail,
-    avatar: null
+    avatar: '👩‍🏫'
   });
 
   const handleSaveProfile = () => {
     localStorage.setItem('inclusiveai_teacher_name', JSON.stringify(teacherName));
     localStorage.setItem('inclusiveai_teacher_subject', JSON.stringify(teacherSubject));
     localStorage.setItem('inclusiveai_teacher_email', JSON.stringify(teacherEmail));
+    localStorage.setItem('inclusiveai_teacher_id', JSON.stringify(customTeacherId.trim() || teacherId));
     saveTeacherProfile(getTeacherProfileObj());
     setProfileSaved(true);
     setTimeout(() => { setProfileSaved(false); setShowProfileEdit(false); }, 1800);
+  };
+
+  const handleCopyTeacherId = async () => {
+    const success = await copyToClipboard(teacherId);
+    if (success) {
+      setCopiedTeacherId(true);
+      setTimeout(() => setCopiedTeacherId(false), 2500);
+    }
   };
 
   // Curriculum Upload Form State
@@ -288,6 +302,18 @@ export default function TeacherDashboard({
     setIsProcessing(true);
     setProcessingStage(1);
 
+    const isImageFile = selectedFile && (selectedFile.type.startsWith('image/') || /\.(png|jpe?g|webp|svg|bmp)$/i.test(selectedFile.name));
+    let extractedImageTactile = null;
+
+    if (isImageFile) {
+      try {
+        setProcessingStage(2);
+        extractedImageTactile = await processDiagramImageForTactile(selectedFile, 800, 600);
+      } catch (err) {
+        console.warn('[TeacherStudio] Edge detection fallback:', err);
+      }
+    }
+
     const formData = new FormData();
     if (selectedFile) formData.append('file', selectedFile);
     formData.append('title', uploadTitle);
@@ -295,14 +321,21 @@ export default function TeacherDashboard({
     formData.append('rawText', uploadText);
 
     try {
-      setProcessingStage(2);
-      const res = await fetch('/api/lessons/upload', { method: 'POST', body: formData });
       setProcessingStage(3);
-      const data = await res.json();
+      let data = { success: false };
+      try {
+        const res = await fetch('/api/lessons/upload', { method: 'POST', body: formData });
+        data = await res.json();
+      } catch (e) {}
       setProcessingStage(4);
 
       setTimeout(() => {
         if (data.success && data.lesson) {
+          if (extractedImageTactile && data.lesson.bviModule) {
+            data.lesson.bviModule.hapticDiagram.outlineDataUrl = extractedImageTactile.outlineDataUrl;
+            data.lesson.bviModule.hapticDiagram.edgeMask = extractedImageTactile.edgeMask;
+            data.lesson.bviModule.hapticDiagram.landmarks = extractedImageTactile.landmarks;
+          }
           onUploadLesson(data.lesson);
         } else {
           // Robust client-side parser fallback
@@ -341,10 +374,12 @@ export default function TeacherDashboard({
                 title: `Diagram: ${uploadTitle || 'Structure Cross-Section'}`,
                 aspectRatio: '4:3',
                 viewBox: { width: 800, height: 600 },
-                paths: [
+                outlineDataUrl: extractedImageTactile?.outlineDataUrl || null,
+                edgeMask: extractedImageTactile?.edgeMask || null,
+                paths: extractedImageTactile ? [] : [
                   { id: 'boundary', name: 'Outer Structural Boundary', type: 'boundary', d: 'M 400,120 C 520,70 660,160 640,320 C 620,440 460,530 400,560 C 340,530 180,440 160,320 C 140,160 280,70 400,120 Z', vibrationPattern: [40, 25] }
                 ],
-                landmarks: [
+                landmarks: extractedImageTactile?.landmarks || [
                   { id: 'poi-1', name: 'Primary Region', x: 400, y: 320, radius: 50, audioDescription: `You are touching the primary region of ${uploadTitle || 'this structure'}.`, hapticTone: [100, 50, 100], color: '#ffffff' }
                 ],
               },
@@ -406,27 +441,53 @@ export default function TeacherDashboard({
               </div>
               {/* Teacher ID Badge */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem' }}>
-                <div style={{ padding: '0.3rem 0.75rem', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '10px', fontFamily: 'monospace', fontSize: '1rem', fontWeight: 900, color: '#ffffff', letterSpacing: '0.08em' }}>{teacherId}</div>
-                <div style={{ fontSize: '0.6rem', color: '#71717a', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Teacher ID</div>
+                <div style={{ padding: '0.35rem 0.85rem', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '10px', fontFamily: 'monospace', fontSize: '1.05rem', fontWeight: 900, color: '#ffffff', letterSpacing: '0.08em' }}>{teacherId}</div>
+                <div style={{ fontSize: '0.65rem', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Teacher ID</div>
               </div>
               {/* Edit / Share buttons */}
               <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto', flexShrink: 0 }}>
-                <button onClick={() => setShowProfileEdit(v => !v)} style={{ padding: '0.4rem 0.9rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', color: '#e4e4e7', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Edit Profile</button>
-                <button onClick={() => { navigator.clipboard.writeText(teacherId); }} style={{ padding: '0.4rem 0.9rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', color: '#e4e4e7', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Copy style={{ width: 12, height: 12 }} />Copy ID</button>
+                <button onClick={() => setShowProfileEdit(v => !v)} style={{ padding: '0.45rem 0.95rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', color: '#e4e4e7', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+                  {showProfileEdit ? 'Cancel' : 'Edit Profile & ID'}
+                </button>
+                <button onClick={handleCopyTeacherId} style={{ padding: '0.45rem 0.95rem', background: copiedTeacherId ? '#166534' : '#27272a', border: `1px solid ${copiedTeacherId ? '#4ade80' : 'rgba(255,255,255,0.15)'}`, borderRadius: '10px', color: copiedTeacherId ? '#4ade80' : '#e4e4e7', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem', transition: 'all 0.2s' }}>
+                  <Copy style={{ width: 13, height: 13 }} />
+                  {copiedTeacherId ? '✓ Copied ID!' : 'Copy ID'}
+                </button>
               </div>
             </div>
 
             {/* Edit Profile Panel */}
             {showProfileEdit && (
               <div style={{ marginTop: '1rem', padding: '1.25rem', background: '#1c1c1f', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Edit Teacher Profile</div>
-                {[['Full Name', teacherName, setTeacherName], ['Subject / Department', teacherSubject, setTeacherSubjectState], ['Email', teacherEmail, setTeacherEmail]].map(([label, val, setter]) => (
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Edit Teacher Profile & ID</div>
+                {[
+                  ['Full Name', teacherName, setTeacherName],
+                  ['Subject / Department', teacherSubject, setTeacherSubjectState],
+                  ['Email', teacherEmail, setTeacherEmail],
+                  ['Custom Teacher ID', customTeacherId, setCustomTeacherId]
+                ].map(([label, val, setter]) => (
                   <div key={label}>
                     <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '0.25rem', display: 'block' }}>{label}</label>
-                    <input value={val} onChange={e => setter(e.target.value)} style={{ width: '100%', padding: '0.5rem 0.75rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', color: '#fff', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }} />
+                    <input
+                      value={val}
+                      onChange={e => setter(label === 'Custom Teacher ID' ? e.target.value.toUpperCase() : e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        background: '#27272a',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        borderRadius: '10px',
+                        color: '#fff',
+                        fontSize: '0.875rem',
+                        fontFamily: label === 'Custom Teacher ID' ? 'monospace' : 'inherit',
+                        fontWeight: label === 'Custom Teacher ID' ? 800 : 500,
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
                   </div>
                 ))}
-                <button onClick={handleSaveProfile} style={{ alignSelf: 'flex-start', padding: '0.5rem 1.25rem', background: profileSaved ? '#166534' : '#3f3f46', border: `1px solid ${profileSaved ? '#4ade80' : 'rgba(255,255,255,0.15)'}`, borderRadius: '10px', color: profileSaved ? '#4ade80' : '#e4e4e7', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>{profileSaved ? '✓ Saved!' : 'Save Profile'}</button>
+                <button onClick={handleSaveProfile} style={{ alignSelf: 'flex-start', padding: '0.5rem 1.25rem', background: profileSaved ? '#166534' : '#3f3f46', border: `1px solid ${profileSaved ? '#4ade80' : 'rgba(255,255,255,0.15)'}`, borderRadius: '10px', color: profileSaved ? '#4ade80' : '#e4e4e7', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>{profileSaved ? '✓ Saved Profile & ID!' : 'Save Profile & ID'}</button>
               </div>
             )}
           </div>

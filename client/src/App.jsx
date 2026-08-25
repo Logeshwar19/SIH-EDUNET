@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Component } from 'react';
 import Navbar from './components/Navbar';
-import HeroLanding from './components/HeroLanding';
 import TeacherDashboard from './components/TeacherDashboard';
 import DeafModule from './components/DeafModule';
 import BlindModule from './components/BlindModule';
 import AccessibilityPanel from './components/AccessibilityPanel';
+import AuthModal from './components/AuthModal';
 import { initialLessons, initialStudents } from './data/lessonsData';
 import {
   startLectureRecording,
@@ -14,17 +14,88 @@ import {
   sentenceToISLGlosses
 } from './services/liveLecture';
 
+// Robust Error Boundary to prevent black screens
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('[InclusiveAI] Component Error caught by boundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ maxWidth: '40rem', margin: '4rem auto', padding: '2rem', background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.2)', borderRadius: '24px', textAlign: 'center', color: '#ffffff' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 0.5rem 0' }}>Module Interface Reload Needed</h2>
+          <p style={{ fontSize: '0.875rem', color: '#a1a1aa', margin: '0 0 1.5rem 0' }}>
+            {this.state.error?.message || "An unexpected view error occurred."}
+          </p>
+          <button
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            style={{ padding: '0.5rem 1.25rem', background: '#ffffff', color: '#09090b', borderRadius: '12px', border: 'none', fontWeight: 800, cursor: 'pointer' }}
+          >
+            Refresh Studio
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState('teacher'); // 'teacher', 'deaf', 'blind'
+  // ── Authentication & Profile State ──────────────────────────────────────────
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem('inclusiveai_user_auth');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(!currentUser);
+
+  // Active module tab is strictly derived from user's chosen role
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const stored = localStorage.getItem('inclusiveai_user_auth');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.role === 'teacher' || parsed.role === 'deaf' || parsed.role === 'blind') {
+          return parsed.role;
+        }
+      }
+    } catch (e) {}
+    return 'teacher';
+  });
+
+  // Sync activeTab whenever currentUser role changes
+  useEffect(() => {
+    if (currentUser?.role) {
+      setActiveTab(currentUser.role);
+    }
+  }, [currentUser]);
+
   const [lessons, setLessons] = useState(initialLessons);
   const [currentLessonId, setCurrentLessonId] = useState(null);
   const [students, setStudents] = useState(initialStudents);
 
   // Live Lecture State
   const [isLiveLecture, setIsLiveLecture] = useState(false);
-  const [liveLectureGlosses, setLiveLectureGlosses] = useState([]); // rolling window of latest glosses
+  const [liveLectureGlosses, setLiveLectureGlosses] = useState([]);
   const [liveLectureTranscript, setLiveLectureTranscript] = useState('');
-  const [liveTeacherReply, setLiveTeacherReply] = useState(null); // { glosses, rawText }
+  const [liveTeacherReply, setLiveTeacherReply] = useState(null);
 
   const [inboxMessages, setInboxMessages] = useState([]);
 
@@ -32,30 +103,18 @@ export default function App() {
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [hapticsEnabled, setHapticsEnabled] = useState(true);
 
-  // Handle URL parameters on load for direct room/role join
+  // Handle URL parameters for direct join
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const roleParam = params.get('role');
       if (roleParam === 'deaf' || roleParam === 'blind' || roleParam === 'teacher') {
-        setActiveTab(roleParam);
+        if (!currentUser) {
+          setActiveTab(roleParam);
+        }
       }
     } catch (e) {}
-  }, []);
-
-  // Fetch backend lessons if server is running
-  useEffect(() => {
-    fetch('/api/lessons')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.lessons?.length > 0) {
-          // Sync with backend if available
-        }
-      })
-      .catch(() => {
-        // Fallback to local lessonsData — expected behavior
-      });
-  }, []);
+  }, [currentUser]);
 
   // ── Live Lecture Controls ───────────────────────────────────────────────────
   const handleStartLiveLecture = useCallback(() => {
@@ -81,7 +140,6 @@ export default function App() {
   // Listen for teacher reply broadcasts
   useEffect(() => {
     const unsub = subscribeLecture((glosses, rawText) => {
-      // Update glosses from broadcast (cross-tab sync)
       setLiveLectureGlosses(prev => {
         const next = [...prev, ...glosses];
         return next.slice(-40);
@@ -117,7 +175,7 @@ export default function App() {
         if (!rohan) {
           rohan = {
             id: 'student-rohan',
-            name: 'Rohan Patel (Deaf Student)',
+            name: currentUser?.name ? `${currentUser.name} (${currentUser.role === 'deaf' ? 'Deaf Student' : 'Student'})` : 'Rohan Patel (Deaf Student)',
             role: 'Deaf Student',
             signAccuracyAvg: score,
             recentSignSubmissions: []
@@ -155,7 +213,7 @@ export default function App() {
   const handleSendMessageToTeacher = ({ studentName, recognizedSignText }) => {
     const newMsg = {
       id: `msg-${Date.now()}`,
-      studentName,
+      studentName: studentName || currentUser?.name || "Student Doubt",
       message: recognizedSignText,
       timestamp: new Date().toISOString()
     };
@@ -165,15 +223,27 @@ export default function App() {
     fetch('/api/sign-to-text/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentName, recognizedSignText })
+      body: JSON.stringify({ studentName: newMsg.studentName, recognizedSignText })
     }).catch(() => {});
+  };
+
+  const handleAuthSuccess = (profile) => {
+    setCurrentUser(profile);
+    setActiveTab(profile.role);
+    setIsAuthModalOpen(false);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('inclusiveai_user_auth');
+    setCurrentUser(null);
+    setIsAuthModalOpen(true);
   };
 
   const currentLesson = lessons.find(l => l.id === currentLessonId) || lessons[0];
 
   return (
     <div style={{ position: 'relative', minHeight: '100vh', zIndex: 1 }}>
-      {/* Universal Navbar */}
+      {/* Universal Navbar with Profile & Role Tabs */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -187,52 +257,57 @@ export default function App() {
         isLiveLecture={isLiveLecture}
         onStartLiveLecture={handleStartLiveLecture}
         onStopLiveLecture={handleStopLiveLecture}
+        currentUser={currentUser}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onLogout={handleLogout}
       />
 
-      {/* Main Content Area */}
-      <main style={{ paddingBottom: '5rem' }}>
-        {activeTab === 'teacher' && (
-          <TeacherDashboard
-            lessons={lessons}
-            currentLessonId={currentLessonId}
-            setCurrentLessonId={setCurrentLessonId}
-            onUploadLesson={handleUploadLesson}
-            students={students}
-            inboxMessages={inboxMessages}
-            setActiveTab={setActiveTab}
-            isLiveLecture={isLiveLecture}
-            onStartLiveLecture={handleStartLiveLecture}
-            onStopLiveLecture={handleStopLiveLecture}
-            onTranscriptUpdate={handleLiveTranscriptUpdate}
-            liveLectureGlosses={liveLectureGlosses}
-            liveLectureTranscript={liveLectureTranscript}
-            onTeacherReply={handleTeacherReply}
-          />
-        )}
+      {/* Main Role-Specific Content Area */}
+      <ErrorBoundary>
+        <main style={{ paddingBottom: '5rem' }}>
+          {activeTab === 'teacher' && (
+            <TeacherDashboard
+              lessons={lessons}
+              currentLessonId={currentLessonId}
+              setCurrentLessonId={setCurrentLessonId}
+              onUploadLesson={handleUploadLesson}
+              students={students}
+              inboxMessages={inboxMessages}
+              setActiveTab={setActiveTab}
+              isLiveLecture={isLiveLecture}
+              onStartLiveLecture={handleStartLiveLecture}
+              onStopLiveLecture={handleStopLiveLecture}
+              onTranscriptUpdate={handleLiveTranscriptUpdate}
+              liveLectureGlosses={liveLectureGlosses}
+              liveLectureTranscript={liveLectureTranscript}
+              onTeacherReply={handleTeacherReply}
+            />
+          )}
 
-        {activeTab === 'deaf' && (
-          <DeafModule
-            lesson={currentLesson}
-            onSavePractice={handleSavePractice}
-            onSendMessageToTeacher={handleSendMessageToTeacher}
-            isLiveLecture={isLiveLecture}
-            liveLectureGlosses={liveLectureGlosses}
-            liveTeacherReply={liveTeacherReply}
-          />
-        )}
+          {activeTab === 'deaf' && (
+            <DeafModule
+              lesson={currentLesson}
+              onSavePractice={handleSavePractice}
+              onSendMessageToTeacher={handleSendMessageToTeacher}
+              isLiveLecture={isLiveLecture}
+              liveLectureGlosses={liveLectureGlosses}
+              liveTeacherReply={liveTeacherReply}
+            />
+          )}
 
-        {activeTab === 'blind' && (
-          <BlindModule
-            lesson={currentLesson}
-            isAudioMuted={isAudioMuted}
-            hapticsEnabled={hapticsEnabled}
-            isLiveLecture={isLiveLecture}
-            liveLectureTranscript={liveLectureTranscript}
-          />
-        )}
-      </main>
+          {activeTab === 'blind' && (
+            <BlindModule
+              lesson={currentLesson}
+              isAudioMuted={isAudioMuted}
+              hapticsEnabled={hapticsEnabled}
+              isLiveLecture={isLiveLecture}
+              liveLectureTranscript={liveLectureTranscript}
+            />
+          )}
+        </main>
+      </ErrorBoundary>
 
-      {/* Persistent Footer */}
+      {/* Persistent Accessible Footer */}
       <footer style={{
         borderTop: '1px solid rgba(255,255,255,0.08)',
         padding: '1.25rem 1rem',
@@ -256,6 +331,14 @@ export default function App() {
 
       {/* Universal Floating Accessibility Panel */}
       <AccessibilityPanel />
+
+      {/* Gmail Authentication & Role Setup Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => currentUser && setIsAuthModalOpen(false)}
+        onAuthSuccess={handleAuthSuccess}
+        currentProfile={currentUser}
+      />
     </div>
   );
 }

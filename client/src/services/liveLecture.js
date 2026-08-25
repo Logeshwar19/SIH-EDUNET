@@ -2,15 +2,46 @@
  * liveLecture.js — InclusiveAI Real-Time Classroom Broadcasting Engine
  * 
  * Features:
- * - Teacher ID system (TCH-XXXX unique IDs)
+ * - Teacher ID system (customizable & unique IDs)
  * - Teacher Profile & Follow system (localStorage persistence)
  * - Live class broadcast with room codes
  * - Real-time WebRTC camera/mic streaming
  * - Speech-to-ISL-Gloss translation pipeline
- * - Follower notification system (join/ignore modal trigger)
+ * - Follower notification system (join/ignore banner trigger)
  */
 
 import { convertTextToISLSequence } from './signDictionary.js';
+
+// ── RELIABLE CLIPBOARD HELPER ────────────────────────────────────────────────
+export async function copyToClipboard(text) {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Clipboard] navigator.clipboard fallback:', err);
+  }
+
+  // Fallback for insecure contexts or iframe restrictions
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    return successful;
+  } catch (err) {
+    console.error('[Clipboard] Fallback failed:', err);
+    return false;
+  }
+}
 
 // ── TEACHER PROFILE & ID SYSTEM ──────────────────────────────────────────────
 
@@ -18,7 +49,13 @@ import { convertTextToISLSequence } from './signDictionary.js';
  * Generates a unique Teacher ID like TCH-A7B2 based on name.
  */
 export function generateTeacherID(name = '') {
-  const nameHash = name.split('').reduce((acc, ch) => acc * 31 + ch.charCodeAt(0), 0x1234);
+  // Check if a custom teacher ID was set in storage
+  try {
+    const custom = JSON.parse(localStorage.getItem('inclusiveai_teacher_id') || '""');
+    if (custom && typeof custom === 'string' && custom.trim()) return custom.trim();
+  } catch (e) {}
+
+  const nameHash = (name || 'Teacher').split('').reduce((acc, ch) => acc * 31 + ch.charCodeAt(0), 0x1234);
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let id = 'TCH-';
   let seed = Math.abs(nameHash);
@@ -45,6 +82,9 @@ export function saveTeacherProfile(profile) {
   const profiles = getTeacherProfiles();
   profiles[profile.id] = { ...profile, updatedAt: Date.now() };
   localStorage.setItem(TEACHER_PROFILES_KEY, JSON.stringify(profiles));
+  if (profile.id) {
+    localStorage.setItem('inclusiveai_teacher_id', JSON.stringify(profile.id));
+  }
   return profiles[profile.id];
 }
 
@@ -190,7 +230,7 @@ export async function startTeacherVideoSession({
     let stream = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 15 } },
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 20 } },
         audio: true
       });
     } catch {
@@ -201,7 +241,7 @@ export async function startTeacherVideoSession({
     _activeMediaStream = stream;
 
     // 2. Attach stream to teacher preview
-    if (videoElement && stream.getVideoTracks().length > 0) {
+    if (videoElement && stream && stream.getVideoTracks().length > 0) {
       videoElement.srcObject = stream;
       try { await videoElement.play(); } catch (e) {}
     }
@@ -209,8 +249,8 @@ export async function startTeacherVideoSession({
     // 3. Setup video frame broadcaster for student views using offscreen capture
     if (!_hiddenCanvas) {
       _hiddenCanvas = document.createElement('canvas');
-      _hiddenCanvas.width = 320;
-      _hiddenCanvas.height = 240;
+      _hiddenCanvas.width = 360;
+      _hiddenCanvas.height = 270;
     }
 
     if (!_captureVideoElement) {
@@ -219,21 +259,32 @@ export async function startTeacherVideoSession({
       _captureVideoElement.muted = true;
       _captureVideoElement.playsInline = true;
     }
-    _captureVideoElement.srcObject = stream;
-    try { await _captureVideoElement.play(); } catch (e) {}
+    if (stream) {
+      _captureVideoElement.srcObject = stream;
+      try { await _captureVideoElement.play(); } catch (e) {}
+    }
 
     const roomChan = getRoomChannel(roomCode);
 
-    if (roomChan && stream.getVideoTracks().length > 0) {
+    if (stream && stream.getVideoTracks().length > 0) {
       const ctx = _hiddenCanvas.getContext('2d');
       if (_frameBroadcastTimer) clearInterval(_frameBroadcastTimer);
       _frameBroadcastTimer = setInterval(() => {
         const sourceVid = (videoElement && videoElement.readyState >= 2) ? videoElement : _captureVideoElement;
         if (!sourceVid || sourceVid.paused || sourceVid.ended) return;
         try {
-          ctx.drawImage(sourceVid, 0, 0, 320, 240);
-          _lastCapturedFrame = _hiddenCanvas.toDataURL('image/jpeg', 0.55);
-          roomChan.postMessage({ type: 'VIDEO_FRAME', roomCode, frameData: _lastCapturedFrame, timestamp: Date.now() });
+          ctx.drawImage(sourceVid, 0, 0, 360, 270);
+          _lastCapturedFrame = _hiddenCanvas.toDataURL('image/jpeg', 0.6);
+          
+          // Post to BroadcastChannel
+          if (roomChan) {
+            roomChan.postMessage({ type: 'VIDEO_FRAME', roomCode, frameData: _lastCapturedFrame, timestamp: Date.now() });
+          }
+          // Same-tab & local storage fallback
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('inclusiveai-live-frame', { detail: { frameData: _lastCapturedFrame, roomCode } }));
+            try { localStorage.setItem('inclusiveai_live_frame', _lastCapturedFrame); } catch (e) {}
+          }
         } catch (err) {}
       }, 100);
     }

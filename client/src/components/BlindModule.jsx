@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { subscribeRoomSession, DEFAULT_ROOM_CODE, subscribeToLiveNotifications, followTeacher, unfollowTeacher } from '../services/liveLecture.js';
+import { processDiagramImageForTactile, isCoordinateOnOutline } from '../services/diagramAnalyzer.js';
 
 export default function BlindModule({ 
   lesson, 
@@ -97,16 +98,24 @@ export default function BlindModule({
   const [activeLandmark, setActiveLandmark] = useState(null);
   const [discoveredLandmarks, setDiscoveredLandmarks] = useState(new Set());
 
+  // Trace & Explain Engine State
+  const [tracingStarted, setTracingStarted] = useState(false);
+  const [currentPartIndex, setCurrentPartIndex] = useState(0);
+  const [partOrder, setPartOrder] = useState([]);
+  const [partsManifest, setPartsManifest] = useState({});
+  const [partCoverage, setPartCoverage] = useState(0);
+  const [statusMessage, setStatusMessage] = useState('Upload a diagram or press Start Guided Tracing to begin.');
+
   // Voice Quiz State
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [isQuizListening, setIsQuizListening] = useState(false);
-  const [quizTranscript, setQuizTranscript] = useState("");
+  const [quizTranscript, setQuizTranscript] = useState('');
   const [quizEvaluation, setQuizEvaluation] = useState(null);
   const [quizScore, setQuizScore] = useState(0);
-  const [typedAnswer, setTypedAnswer] = useState("");
+  const [typedAnswer, setTypedAnswer] = useState('');
 
   // Accessibility Mobile Gestures State
-  const [gestureFeedback, setGestureFeedback] = useState("");
+  const [gestureFeedback, setGestureFeedback] = useState('');
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
   const longPressTimerRef = useRef(null);
   const lastTapTimeRef = useRef(0);
@@ -118,42 +127,40 @@ export default function BlindModule({
   const audioCtxRef = useRef(null);
   const oscillatorRef = useRef(null);
   const gainNodeRef = useRef(null);
+  const vibeIntervalRef = useRef(null);
+  const offPathTimerRef = useRef(null);
+  const tracedPointsRef = useRef(new Set());
+
+  // AI Vision & API Key State
+  const [geminiApiKey, setGeminiApiKey] = useState(() => {
+    try {
+      return localStorage.getItem('inclusiveai_gemini_api_key') || localStorage.getItem('gemini_api_key') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
 
   // Dynamic BVI Data from user upload or active lesson
   const bviData = customBviData || lesson?.bviModule || {
-    audioSummary: "Welcome to the accessible audio learning portal. You can upload any PDF, PPT, notes or diagram, or join your teacher's live audio broadcast.",
+    audioSummary: "Welcome to the Blind & BVI Learning Studio. Upload your diagram image or PDF notes using the Upload button above to begin. Once uploaded, your diagram will be analyzed and you can trace its outlines with real vibration feedback.",
     audioSections: [
       {
-        sectionTitle: "Welcome & Navigation Overview",
-        content: "This audio module is designed for blind and visually impaired students. You can explore interactive diagrams with haptic vibration, upload study materials, listen to live lecture speech in real time, and complete voice quizzes."
+        sectionTitle: "How to Use This Module",
+        content: "Tap 'Upload Diagram' in the Tactile Diagram tab to upload any image of a diagram. The system will extract its outlines automatically. When you slide your finger along the white lines on screen, your phone will vibrate — on the line means vibration, off the line means silence."
+      },
+      {
+        sectionTitle: "Vibration Touch Guide",
+        content: "Touch and drag your finger slowly across the diagram surface. When you are on a border or outline, you will feel your device vibrate continuously. When you move away from the line, vibration stops immediately. Use this to trace and understand the shape of each part."
       }
     ],
     hapticDiagram: {
-      title: "Interactive Tactile Exploration Surface",
-      paths: [
-        { type: "boundary", d: "M 200,300 C 200,160 320,140 400,220 C 480,140 600,160 600,300 C 600,440 400,560 400,560 C 400,560 200,440 200,300 Z" },
-        { type: "inner-wall", d: "M 400,220 L 400,540" },
-        { type: "inner-wall", d: "M 250,340 L 550,340" }
-      ],
-      landmarks: [
-        { id: "lm-1", name: "Top Left Chamber (Right Atrium)", x: 300, y: 240, radius: 45, audioDescription: "Right Atrium: Receives deoxygenated blood from the upper and lower body and channels it into the Right Ventricle.", hapticTone: [80, 40, 80] },
-        { id: "lm-2", name: "Bottom Left Chamber (Right Ventricle)", x: 300, y: 400, radius: 45, audioDescription: "Right Ventricle: Pumps deoxygenated blood through the pulmonary artery to the lungs for oxygen absorption.", hapticTone: [80, 40, 80] },
-        { id: "lm-3", name: "Top Right Chamber (Left Atrium)", x: 500, y: 240, radius: 45, audioDescription: "Left Atrium: Receives freshly oxygenated blood from the pulmonary veins and passes it into the Left Ventricle.", hapticTone: [80, 40, 80] },
-        { id: "lm-4", name: "Bottom Right Chamber (Left Ventricle)", x: 500, y: 400, radius: 45, audioDescription: "Left Ventricle: Features the thickest muscular wall to pump oxygenated blood under high pressure through the Aorta to the entire body.", hapticTone: [100, 50, 100] }
-      ]
+      title: "Upload a Diagram to Begin",
+      paths: [],
+      landmarks: []
     },
-    voiceQuiz: [
-      {
-        id: "q-bvi-1",
-        spokenQuestion: "What is the primary function of the Left Ventricle in the circulatory system?",
-        expectedKeywords: ["pump", "blood", "oxygen", "body", "aorta", "pressure"]
-      },
-      {
-        id: "q-bvi-2",
-        spokenQuestion: "How do valves in the heart assist blood flow?",
-        expectedKeywords: ["prevent", "backflow", "direction", "one direction"]
-      }
-    ]
+    voiceQuiz: []
   };
 
   const audioSections = bviData.audioSections || [];
@@ -169,54 +176,148 @@ export default function BlindModule({
         const ctx = new AudioCtx();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
+
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(320, ctx.currentTime);
+        osc.frequency.setValueAtTime(392, ctx.currentTime);
         gain.gain.setValueAtTime(0, ctx.currentTime);
+
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start();
+
         audioCtxRef.current = ctx;
         oscillatorRef.current = osc;
         gainNodeRef.current = gain;
       }
       if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-        audioCtxRef.current.resume();
+        audioCtxRef.current.resume().catch(() => {});
       }
     } catch (e) {
-      console.warn("AudioContext init note:", e);
+      console.warn("Audio Context init error:", e);
     }
   };
 
-  const playSpatialHapticFeedback = (onLine, isLandmark, yPos = 300) => {
-    initAudioHaptics();
-    if (!audioCtxRef.current || !gainNodeRef.current || !oscillatorRef.current) return;
+  const setTone = (on, successPulse = false, yPos = 300) => {
+    if (isAudioMuted) return;
+    if (!audioCtxRef.current || !gainNodeRef.current || !oscillatorRef.current) {
+      initAudioHaptics();
+    }
     const ctx = audioCtxRef.current;
     const gain = gainNodeRef.current;
     const osc = oscillatorRef.current;
+    if (!ctx || !gain || !osc) return;
 
-    if (isLandmark) {
-      // Harmonic chord frequency for landmarks
-      osc.frequency.setValueAtTime(580, ctx.currentTime);
-      gain.gain.setTargetAtTime(0.18, ctx.currentTime, 0.02);
-      triggerHaptic([100, 50, 100]);
-    } else if (onLine) {
-      // Frequency adapts to Y position (240Hz at bottom to 460Hz at top)
-      const freq = Math.max(220, Math.min(480, 480 - (yPos / 600) * 240));
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      gain.gain.setTargetAtTime(0.08, ctx.currentTime, 0.03);
-      triggerHaptic([35, 15]);
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    const now = ctx.currentTime;
+    if (successPulse) {
+      gain.gain.cancelScheduledValues(now);
+      osc.frequency.setValueAtTime(392, now);
+      osc.frequency.linearRampToValueAtTime(784, now + 0.35);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.5);
+      return;
+    }
+
+    gain.gain.cancelScheduledValues(now);
+    if (on) {
+      const freq = Math.max(220, Math.min(480, 480 - (yPos / 600) * 220));
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.linearRampToValueAtTime(0.18, now + 0.04);
     } else {
-      // Off line: mute tone and cancel vibration
-      gain.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
-      triggerHaptic(0);
+      gain.gain.linearRampToValueAtTime(0, now + 0.04);
+    }
+  };
+
+  // ── Device Vibration Capability Detection ─────────────────────────────────
+  const deviceHasVibration = typeof navigator !== 'undefined' && 'vibrate' in navigator;
+
+  // ── Reliable Physical Vibration Engine (Mobile Haptics) ──────────────────
+  // navigator.vibrate() = real motor haptics on Android Chrome/Edge/Firefox.
+  // On iOS or desktop (no vibrate API), falls back to audio tone only.
+  const startVibe = () => {
+    // Never block on hapticsEnabled — user explicitly wants vibration
+    if (!deviceHasVibration) return;
+    if (vibeIntervalRef.current) return;
+    try { navigator.vibrate(50); } catch (e) {}
+    vibeIntervalRef.current = setInterval(() => {
+      try { navigator.vibrate(50); } catch (e) {}
+    }, 100);
+  };
+
+  const stopVibe = () => {
+    if (vibeIntervalRef.current) {
+      clearInterval(vibeIntervalRef.current);
+      vibeIntervalRef.current = null;
+    }
+    if (deviceHasVibration) {
+      try { navigator.vibrate(0); } catch (e) {}
+    }
+  };
+
+  const successVibe = () => {
+    if (deviceHasVibration) {
+      try { navigator.vibrate([100, 50, 100, 50, 250]); } catch (e) {}
+    }
+  };
+
+  const playSpatialHapticFeedback = (onLine, isLandmark = false, yPos = 300) => {
+    if (isLandmark) {
+      successVibe();
+      // Audio tone only if no physical vibration available (desktop fallback)
+      if (!deviceHasVibration) setTone(false, true);
+    } else if (onLine) {
+      startVibe();
+      // Audio fallback for desktop-only (no real vibration motor)
+      if (!deviceHasVibration && !isAudioMuted) setTone(true, false, yPos);
+    } else {
+      stopVibe();
+      if (!deviceHasVibration) setTone(false, false, yPos);
     }
   };
 
   const stopSpatialHapticFeedback = () => {
-    if (gainNodeRef.current && audioCtxRef.current) {
-      gainNodeRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.02);
+    setTone(false);
+    stopVibe();
+  };
+
+  // ── Guided Tracing Part Starter ───────────────────────────────────────────
+  const startTracingPart = (idx) => {
+    const currentDiagram = bviData.hapticDiagram || { landmarks: [] };
+    const landmarks = currentDiagram.landmarks || [];
+    if (!landmarks.length) {
+      speakText('No diagram loaded. Please upload a diagram image first, then press Start Guided Tracing.', true);
+      return;
     }
-    triggerHaptic(0);
+
+    const clampedIdx = Math.min(idx, landmarks.length - 1);
+    const lm = landmarks[clampedIdx];
+    if (!lm) return;
+
+    setTracingStarted(true);
+    setCurrentPartIndex(clampedIdx);
+    setPartCoverage(0);
+    tracedPointsRef.current = new Set();
+
+    // Set part order from landmarks
+    const order = landmarks.map(l => l.id);
+    setPartOrder(order);
+
+    // Build parts manifest from landmarks
+    const manifest = {};
+    landmarks.forEach(l => {
+      manifest[l.id] = { name: l.name, description: l.audioDescription || '' };
+    });
+    setPartsManifest(manifest);
+
+    const msg = `Part ${clampedIdx + 1} of ${landmarks.length}: ${lm.name}. Slide your finger along the outline to feel vibrations.`;
+    setStatusMessage(msg);
+    speakText(msg, true);
+    setActiveLandmark(lm);
+    setTouchCoordinates({ x: lm.x, y: lm.y });
+    initAudioHaptics();
   };
 
   const speakText = (text, priority = false) => {
@@ -465,83 +566,175 @@ export default function BlindModule({
   };
 
   // ── Pointer Handlers for Tactile Diagram Exploration ───────────────────────
+  // ── Geometry & Path Sampling for Tactile Outline Tracing ────────────────────
+  const samplePath = (pathEl, step = 4) => {
+    if (!pathEl || typeof pathEl.getTotalLength !== 'function') return [];
+    try {
+      const total = pathEl.getTotalLength();
+      const pts = [];
+      for (let d = 0; d <= total; d += step) {
+        const p = pathEl.getPointAtLength(d);
+        pts.push({ x: p.x, y: p.y });
+      }
+      return pts;
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const nearest = (pt, samples) => {
+    let min = Infinity, idx = -1;
+    for (let i = 0; i < samples.length; i++) {
+      const dx = pt.x - samples[i].x;
+      const dy = pt.y - samples[i].y;
+      const d = Math.hypot(dx, dy);
+      if (d < min) {
+        min = d;
+        idx = i;
+      }
+    }
+    return { min, idx };
+  };
+
+  const getDirectionText = (from, to) => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    if (Math.hypot(dx, dy) < 8) return null;
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+    const ratio = adx / (ady || 0.001);
+    const vert = dy > 0 ? "down" : "up";
+    const horiz = dx > 0 ? "right" : "left";
+    if (ratio > 2.2) return horiz;
+    if (ratio < 0.45) return vert;
+    return `${vert} and ${horiz}`;
+  };
+
+  // ── Pointer Handlers for Tactile Diagram Exploration ───────────────────────
+  // IMPORTANT: navigator.vibrate MUST be called directly inside a touch/pointer 
+  // event handler, not via setTimeout/async. This is required by browser policy.
+
+  const getCanvasXY = (e) => {
+    if (!canvasRef.current) return { x: 0, y: 0 };
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = 800 / rect.width;
+    const scaleY = 600 / rect.height;
+    const clientX = e.clientX ?? (e.touches?.[0]?.clientX ?? 0);
+    const clientY = e.clientY ?? (e.touches?.[0]?.clientY ?? 0);
+    return {
+      x: Math.max(0, Math.min(799, Math.round((clientX - rect.left) * scaleX))),
+      y: Math.max(0, Math.min(599, Math.round((clientY - rect.top) * scaleY)))
+    };
+  };
+
   const handlePointerDown = (e) => {
+    e.preventDefault();
     setIsTouching(true);
-    handlePointerMove(e);
+    isPointerDownRef.current = true;
+    // Unlock AudioContext (must be called in user gesture)
+    if (audioCtxRef.current?.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
+    } else if (!audioCtxRef.current) {
+      initAudioHaptics();
+    }
+    // Immediate test vibrate on first touch to confirm device supports it
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try { navigator.vibrate(30); } catch (e2) {}
+    }
+    const { x, y } = getCanvasXY(e);
+    setTouchCoordinates({ x, y });
+    processTouch(x, y);
+  };
+
+  const handlePointerMove = (e) => {
+    if (!isPointerDownRef.current) return;
+    e.preventDefault();
+    const { x, y } = getCanvasXY(e);
+    setTouchCoordinates({ x, y });
+    processTouch(x, y);
   };
 
   const handlePointerUp = () => {
     setIsTouching(false);
+    isPointerDownRef.current = false;
     setIsOnPath(false);
-    setActiveLandmark(null);
-    stopSpatialHapticFeedback();
+    stopVibe();
+    // Stop audio tone too
+    if (gainNodeRef.current && audioCtxRef.current) {
+      try {
+        gainNodeRef.current.gain.linearRampToValueAtTime(0, audioCtxRef.current.currentTime + 0.05);
+      } catch (e2) {}
+    }
   };
 
-  const checkHapticCollisions = (x, y) => {
-    let hitLandmark = null;
-    if (diagram.landmarks) {
-      for (const lm of diagram.landmarks) {
-        const dist = Math.hypot(x - lm.x, y - lm.y);
-        if (dist <= (lm.radius || 40)) {
-          hitLandmark = lm;
-          break;
+  // Core touch processing: check edge mask, vibrate or stop
+  const processTouch = (x, y) => {
+    const edgeMask = diagram?.edgeMask;
+    if (!edgeMask) {
+      // No diagram uploaded yet
+      setIsOnPath(false);
+      return;
+    }
+
+    // Direct pixel lookup in dilated edge mask (NO radius search needed — already dilated)
+    const onEdge = isCoordinateOnOutline(x, y, edgeMask, 800, 600);
+
+    if (onEdge) {
+      setIsOnPath(true);
+      // DIRECTLY vibrate in touch handler — this is the ONLY reliable way
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        try { navigator.vibrate(40); } catch (e2) {}
+      }
+      // Check if we hit a landmark
+      if (diagram.landmarks) {
+        for (const lm of diagram.landmarks) {
+          const dist = Math.hypot(x - lm.x, y - lm.y);
+          if (dist <= (lm.radius || 42) && activeLandmark?.id !== lm.id) {
+            setActiveLandmark(lm);
+            setDiscoveredLandmarks(prev => new Set(prev).add(lm.id));
+            // Success vibration + speak description
+            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+              try { navigator.vibrate([100, 50, 100, 50, 250]); } catch (e2) {}
+            }
+            speakText(`${lm.name}. ${lm.audioDescription}`, true);
+            break;
+          }
         }
       }
-    }
-
-    if (hitLandmark) {
-      if (activeLandmark?.id !== hitLandmark.id) {
-        setActiveLandmark(hitLandmark);
-        setDiscoveredLandmarks(prev => new Set(prev).add(hitLandmark.id));
-        playSpatialHapticFeedback(true, true, y);
-        speakText(`${hitLandmark.name}. ${hitLandmark.audioDescription}`, true);
-      }
-      setIsOnPath(true);
-      return;
-    } else {
-      setActiveLandmark(null);
-    }
-
-    // Check distance to center contours / inlines / outlines
-    const distToCenter = Math.hypot(x - 400, y - 320);
-    const onOutline = (distToCenter >= 130 && distToCenter <= 270) || (Math.abs(x - 400) < 18 && y >= 200 && y <= 540) || (Math.abs(y - 340) < 18 && x >= 230 && x <= 570);
-
-    if (onOutline) {
-      setIsOnPath(true);
-      playSpatialHapticFeedback(true, false, y);
     } else {
       setIsOnPath(false);
-      playSpatialHapticFeedback(false, false, y);
+      // Stop vibration immediately when off edge
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        try { navigator.vibrate(0); } catch (e2) {}
+      }
     }
   };
 
-  const handlePointerMove = (e) => {
-    if (!canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    
-    const scaleX = 800 / rect.width;
-    const scaleY = 600 / rect.height;
-    
-    const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
-    const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
-    
-    const x = Math.max(10, Math.min(790, (clientX - rect.left) * scaleX));
-    const y = Math.max(10, Math.min(590, (clientY - rect.top) * scaleY));
-    
-    setTouchCoordinates({ x: Math.round(x), y: Math.round(y) });
-    checkHapticCollisions(x, y);
-  };
+  const cachedOutlineImgRef = useRef(null);
 
-  // Draw monochrome high-contrast tactile diagram on HTML5 Canvas
+  // Pre-load outline image when diagram data changes
   useEffect(() => {
+    if (diagram.outlineDataUrl) {
+      const img = new Image();
+      img.onload = () => {
+        cachedOutlineImgRef.current = img;
+        drawCanvas();
+      };
+      img.src = diagram.outlineDataUrl;
+    } else {
+      cachedOutlineImgRef.current = null;
+    }
+  }, [diagram.outlineDataUrl]);
+
+  const drawCanvas = () => {
     if (!canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Tactile Grid Background
+    // 1. Tactile Grid Background
     ctx.strokeStyle = '#18181b';
     ctx.lineWidth = 1;
     for (let i = 0; i < canvas.width; i += 80) {
@@ -557,14 +750,17 @@ export default function BlindModule({
       ctx.stroke();
     }
 
-    // Draw Inlines and Outlines
-    if (diagram.paths) {
+    // 2. Draw Cached Outline Image or Vector Paths
+    if (cachedOutlineImgRef.current) {
+      try {
+        ctx.drawImage(cachedOutlineImgRef.current, 0, 0, 800, 600);
+      } catch (e) {}
+    } else if (diagram.paths && diagram.paths.length > 0) {
       diagram.paths.forEach(p => {
         ctx.save();
         ctx.lineWidth = p.type === 'boundary' ? 7 : 3.5;
         ctx.strokeStyle = '#FFFFFF';
         ctx.setLineDash(p.type === 'inner-wall' ? [10, 6] : []);
-        
         try {
           const path2d = new Path2D(p.d);
           ctx.stroke(path2d);
@@ -575,52 +771,93 @@ export default function BlindModule({
       });
     }
 
-    // Draw Interactive Landmarks
-    if (diagram.landmarks) {
-      diagram.landmarks.forEach(lm => {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(lm.x, lm.y, lm.radius || 45, 0, Math.PI * 2);
-        
+    // 3. Draw Landmarks / POIs as clean sleek numbered pins with floating badges
+    if (diagram.landmarks && diagram.landmarks.length > 0) {
+      diagram.landmarks.forEach((lm, idx) => {
         const isDiscovered = discoveredLandmarks.has(lm.id);
-        const isActive = activeLandmark?.id === lm.id;
+        const isActive = activeLandmark?.id === lm.id || (tracingStarted && partOrder[currentPartIndex] === lm.id);
 
-        ctx.fillStyle = isActive 
-          ? 'rgba(255, 255, 255, 0.45)' 
-          : isDiscovered 
-          ? 'rgba(255, 255, 255, 0.2)' 
-          : 'rgba(255, 255, 255, 0.08)';
+        ctx.save();
+
+        // 3a. Glowing pulse halo around active pin
+        if (isActive) {
+          ctx.beginPath();
+          ctx.arc(lm.x, lm.y, 24, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.22)';
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#34d399';
+          ctx.stroke();
+        }
+
+        // 3b. Numbered Pin Badge
+        ctx.beginPath();
+        ctx.arc(lm.x, lm.y, 14, 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? '#10b981' : isDiscovered ? '#27272a' : '#18181b';
         ctx.fill();
-
-        ctx.lineWidth = isActive ? 3.5 : 2;
-        ctx.strokeStyle = isActive ? '#FFFFFF' : isDiscovered ? '#a1a1aa' : '#52525b';
+        ctx.lineWidth = isActive ? 2.5 : 1.5;
+        ctx.strokeStyle = isActive ? '#ffffff' : isDiscovered ? '#a1a1aa' : '#52525b';
         ctx.stroke();
 
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 12px Manrope, sans-serif';
+        // Pin Number Text
+        ctx.fillStyle = isActive ? '#09090b' : '#ffffff';
+        ctx.font = 'bold 11px Manrope, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(lm.name, lm.x, lm.y + 4);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(idx + 1), lm.x, lm.y);
+
+        // 3c. Floating Pill Label below pin
+        const labelText = lm.name.split('(')[0].trim();
+        ctx.font = '700 11px Manrope, sans-serif';
+        const textMetrics = ctx.measureText(labelText);
+        const pillW = Math.max(48, textMetrics.width + 16);
+        const pillH = 20;
+        const pillX = lm.x - pillW / 2;
+        const pillY = lm.y + 17;
+
+        ctx.fillStyle = isActive ? 'rgba(16, 185, 129, 0.95)' : 'rgba(18, 18, 21, 0.88)';
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(pillX, pillY, pillW, pillH, 6);
+        } else {
+          ctx.rect(pillX, pillY, pillW, pillH);
+        }
+        ctx.fill();
+        ctx.strokeStyle = isActive ? '#ffffff' : 'rgba(255, 255, 255, 0.18)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = isActive ? '#09090b' : '#f4f4f5';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labelText, lm.x, pillY + pillH / 2);
+
         ctx.restore();
       });
     }
 
-    // Draw Active Finger Touch Coordinate
+    // 4. Draw Active Finger Touch Coordinate
     if (isTouching) {
       ctx.save();
       ctx.beginPath();
-      ctx.arc(touchCoordinates.x, touchCoordinates.y, isOnPath ? 24 : 14, 0, Math.PI * 2);
+      ctx.arc(touchCoordinates.x, touchCoordinates.y, isOnPath ? 20 : 12, 0, Math.PI * 2);
       ctx.fillStyle = activeLandmark 
-        ? 'rgba(255, 255, 255, 0.9)' 
+        ? 'rgba(52, 211, 153, 0.9)' 
         : isOnPath 
-        ? 'rgba(255, 255, 255, 0.7)' 
+        ? 'rgba(16, 185, 129, 0.85)' 
         : 'rgba(113, 113, 122, 0.45)';
       ctx.fill();
-      ctx.strokeStyle = '#FFFFFF';
+      ctx.strokeStyle = isOnPath ? '#34d399' : '#FFFFFF';
       ctx.lineWidth = 2.5;
       ctx.stroke();
       ctx.restore();
     }
-  }, [diagram, touchCoordinates, isTouching, isOnPath, activeLandmark, discoveredLandmarks]);
+  };
+
+  // Re-draw whenever coordinates or active items change
+  useEffect(() => {
+    drawCanvas();
+  }, [diagram, touchCoordinates, isTouching, isOnPath, activeLandmark, discoveredLandmarks, tracingStarted, currentPartIndex]);
 
   // ── Document / PDF / PPT / Voice Upload Processor ─────────────────────────
   const processUploadedContent = (text, fileName = "Uploaded Notes") => {
@@ -675,15 +912,59 @@ export default function BlindModule({
     }, 1000);
   };
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        const text = evt.target.result || `Content extracted from ${file.name}`;
-        processUploadedContent(typeof text === 'string' ? text : `Analysis of ${file.name}`, file.name);
-      };
-      reader.readAsText(file);
+      const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|svg|bmp)$/i.test(file.name);
+
+      if (isImage) {
+        setIsProcessingUpload(true);
+        speakText(`Analyzing diagram ${file.name} with AI Vision. Please wait...`, true);
+        try {
+          const edgeResult = await processDiagramImageForTactile(file, 800, 600, geminiApiKey);
+          const generatedBvi = {
+            audioSummary: edgeResult.summary || `AI Analysis of ${file.name}: Identified ${edgeResult.landmarks.length} anatomical parts. Slide finger on outlines to feel tactile vibration.`,
+            audioSections: [
+              {
+                sectionTitle: `AI Overview: ${edgeResult.title || file.name}`,
+                content: edgeResult.summary || `This diagram was converted into a high-contrast tactile outline with AI Vision. When your finger touches an outline, your device vibrates.`
+              },
+              ...edgeResult.landmarks.map((lm, i) => ({
+                sectionTitle: `Part ${i + 1}: ${lm.name}`,
+                content: lm.audioDescription
+              }))
+            ],
+            hapticDiagram: {
+              title: edgeResult.title || `Tactile Outline: ${file.name}`,
+              outlineDataUrl: edgeResult.outlineDataUrl,
+              edgeMask: edgeResult.edgeMask,
+              landmarks: edgeResult.landmarks,
+              paths: []
+            },
+            voiceQuiz: edgeResult.landmarks.slice(0, 3).map((lm, i) => ({
+              id: `q-ai-${i + 1}`,
+              spokenQuestion: `In this diagram ${edgeResult.title || file.name}, what is the role of ${lm.name}?`,
+              expectedKeywords: lm.audioDescription.split(/\s+/).filter(w => w.length > 4).slice(0, 4)
+            }))
+          };
+
+          setCustomBviData(generatedBvi);
+          setIsProcessingUpload(false);
+          setActiveTab('haptic');
+          speakText(`AI Vision analysis complete for ${edgeResult.title || file.name}. Identified ${edgeResult.landmarks.length} parts. Slide your finger along the outlines to feel vibration.`, true);
+        } catch (err) {
+          console.error("Image processing error:", err);
+          setIsProcessingUpload(false);
+          speakText("Failed to process diagram image. Please try another image file.", true);
+        }
+      } else {
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const text = evt.target.result || `Content extracted from ${file.name}`;
+          processUploadedContent(typeof text === 'string' ? text : `Analysis of ${file.name}`, file.name);
+        };
+        reader.readAsText(file);
+      }
     }
   };
 
@@ -883,21 +1164,79 @@ export default function BlindModule({
         </div>
       </div>
 
-      {/* LIVE NOTIFICATION MODAL */}
+      {/* NON-INTRUSIVE LIVE CLASS NOTIFICATION BANNER */}
       {liveNotification && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.80)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
-          <div style={{ background: '#18181b', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '24px', padding: '2.5rem 2.25rem', maxWidth: '420px', width: '90%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem', boxShadow: '0 25px 60px rgba(0,0,0,0.7)' }}>
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg, #27272a, #3f3f46)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem' }}>👩‍🏫</div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>🔴 Live Class Started</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>{liveNotification.teacherName}</div>
-              <div style={{ fontSize: '0.85rem', color: '#a1a1aa', marginTop: 4 }}>{liveNotification.teacherSubject}</div>
-              <div style={{ fontSize: '0.8rem', color: '#e4e4e7', marginTop: '0.75rem', padding: '0.5rem 1rem', background: '#27272a', borderRadius: '10px' }}>{liveNotification.lessonTitle}</div>
+        <div style={{
+          background: 'linear-gradient(90deg, #18181b 0%, #27272a 100%)',
+          border: '1px solid rgba(239, 68, 68, 0.4)',
+          borderRadius: '18px',
+          padding: '0.85rem 1.25rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          boxShadow: '0 8px 24px rgba(239, 68, 68, 0.15)',
+          animation: 'fadeIn 0.3s ease'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', fontSize: '1.1rem', flexShrink: 0 }}>
+              👩‍🏫
             </div>
-            <div style={{ display: 'flex', gap: '0.75rem', width: '100%' }}>
-              <button onClick={() => { setStudentRoomCode(liveNotification.roomCode); setActiveTab('live'); setLiveNotification(null); speakText(`Joining live class by ${liveNotification.teacherName}. Auto narration active.`, true); }} style={{ flex: 1, padding: '0.75rem 1rem', background: '#ffffff', color: '#09090b', border: 'none', borderRadius: '14px', fontSize: '0.875rem', fontWeight: 800, cursor: 'pointer' }}>✅ Join &amp; Listen</button>
-              <button onClick={() => setLiveNotification(null)} style={{ flex: 1, padding: '0.75rem 1rem', background: '#27272a', color: '#a1a1aa', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer' }}>Ignore</button>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span className="live-dot" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#ef4444', boxShadow: '0 0 6px #ef4444' }} />
+                <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff' }}>
+                  {liveNotification.teacherName} started Live Audio Class!
+                </span>
+                <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>({liveNotification.teacherSubject})</span>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: '#d4d4d8', margin: '0.15rem 0 0 0' }}>
+                Lesson: <strong style={{ color: '#ffffff' }}>{liveNotification.lessonTitle}</strong> • Room: <span style={{ fontFamily: 'monospace' }}>{liveNotification.roomCode}</span>
+              </p>
             </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button
+              onClick={() => {
+                setStudentRoomCode(liveNotification.roomCode);
+                setActiveTab('live');
+                setLiveNotification(null);
+                speakText(`Joining live class by ${liveNotification.teacherName}. Auto narration active.`, true);
+              }}
+              style={{
+                padding: '0.45rem 1rem',
+                background: '#ffffff',
+                color: '#09090b',
+                border: 'none',
+                borderRadius: '10px',
+                fontSize: '0.75rem',
+                fontWeight: 800,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                boxShadow: '0 2px 8px rgba(255, 255, 255, 0.2)'
+              }}
+            >
+              <Radio style={{ width: 13, height: 13, color: '#ef4444' }} /> Join & Listen
+            </button>
+            <button
+              onClick={() => setLiveNotification(null)}
+              style={{
+                padding: '0.45rem 0.85rem',
+                background: '#18181b',
+                color: '#a1a1aa',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '10px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Dismiss
+            </button>
           </div>
         </div>
       )}
@@ -1007,20 +1346,32 @@ export default function BlindModule({
         </div>
       )}
 
-      {/* TAB 1: TACTILE DIAGRAM EXPLORATION WITH VIBRATION & SPATIAL AUDIO FREQUENCY */}
+      {/* TAB 1: TACTILE DIAGRAM EXPLORATION WITH TRACE & EXPLAIN ENGINE */}
       {activeTab === 'haptic' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(280px, 360px)', gap: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(300px, 380px)', gap: '1.5rem' }}>
           <div className="ref-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            
+            {/* Header & Quick Action Buttons */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Vibrate className="w-5 h-5 text-white" />
                 <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#ffffff' }}>
-                  {diagram.title || "Interactive Tactile Diagram Surface"}
+                  {diagram.title || "Trace & Explain — Interactive Diagram Surface"}
                 </h3>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                 <button
-                  onClick={activateHaptics}
+                  onClick={() => {
+                    initAudioHaptics();
+                    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+                      audioCtxRef.current.resume().catch(() => {});
+                    }
+                    startVibe();
+                    setTimeout(stopVibe, 150);
+                    setHapticsActivated(true);
+                    speakText("Haptics and audio tone active. Touch the diagram outline.", true);
+                  }}
                   style={{
                     padding: '0.35rem 0.75rem',
                     background: hapticsActivated ? '#10b981' : '#ffffff',
@@ -1036,15 +1387,285 @@ export default function BlindModule({
                   }}
                 >
                   <Vibrate style={{ width: 14, height: 14 }} />
-                  {hapticsActivated ? '✓ Haptics Ready' : '⚡ Enable Haptic Vibration'}
+                  {hapticsActivated ? '✓ Haptics Ready' : '⚡ Enable Vibration & Tone'}
                 </button>
-                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ffffff', background: '#121215', padding: '0.25rem 0.65rem', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.15)' }}>
-                  {discoveredLandmarks.size} of {diagram.landmarks?.length || 0} Points Explored
-                </span>
+
+                <button
+                  onClick={() => {
+                    setApiKeyInput(geminiApiKey);
+                    setIsApiKeyModalOpen(true);
+                  }}
+                  style={{
+                    padding: '0.35rem 0.75rem',
+                    background: geminiApiKey ? 'rgba(16, 185, 129, 0.15)' : '#27272a',
+                    color: geminiApiKey ? '#34d399' : '#ffffff',
+                    border: geminiApiKey ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem'
+                  }}
+                  title="Configure Gemini Vision AI Key for instant diagram part recognition"
+                >
+                  <Sparkles style={{ width: 13, height: 13 }} />
+                  <span>{geminiApiKey ? 'AI Vision: Active' : '🔑 Set AI Key'}</span>
+                </button>
+
+                <label
+                  style={{
+                    padding: '0.35rem 0.75rem',
+                    background: '#27272a',
+                    color: '#ffffff',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem'
+                  }}
+                  title="Upload diagram image to convert into traceable parts"
+                >
+                  <Upload style={{ width: 13, height: 13 }} />
+                  <span>Upload Diagram</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    onChange={handleFileUpload}
+                    style={{ display: 'none' }}
+                  />
+                </label>
               </div>
             </div>
 
-            {/* Tactile Surface Area */}
+            {/* Modal for Setting Gemini AI Vision API Key */}
+            {isApiKeyModalOpen && (
+              <div style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 99999,
+                background: 'rgba(0, 0, 0, 0.85)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem'
+              }}>
+                <div style={{
+                  background: '#121215',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '20px',
+                  maxWidth: '440px',
+                  width: '100%',
+                  padding: '1.5rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '1rem',
+                  boxShadow: '0 20px 50px rgba(0,0,0,0.8)'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Sparkles style={{ width: 18, height: 18, color: '#34d399' }} />
+                      Gemini Vision AI Key
+                    </h3>
+                    <button
+                      onClick={() => setIsApiKeyModalOpen(false)}
+                      style={{ background: 'none', border: 'none', color: '#a1a1aa', fontSize: '1.2rem', cursor: 'pointer' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  
+                  <p style={{ margin: 0, fontSize: '0.8125rem', color: '#d4d4d8', lineHeight: 1.5 }}>
+                    Enter your Google Gemini API key to automatically analyze any uploaded diagram with Vision AI (reads labels, leaf parts, cell structures, and speaks educational explanations).
+                  </p>
+
+                  <input
+                    type="password"
+                    placeholder="AIzaSy..."
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.65rem 0.85rem',
+                      background: '#18181b',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      borderRadius: '10px',
+                      color: '#ffffff',
+                      fontSize: '0.875rem',
+                      fontFamily: 'monospace'
+                    }}
+                  />
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                    <button
+                      onClick={() => {
+                        localStorage.removeItem('inclusiveai_gemini_api_key');
+                        setGeminiApiKey('');
+                        setIsApiKeyModalOpen(false);
+                      }}
+                      style={{
+                        padding: '0.45rem 0.85rem',
+                        background: '#27272a',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '8px',
+                        color: '#a1a1aa',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => {
+                        const trimmed = apiKeyInput.trim();
+                        localStorage.setItem('inclusiveai_gemini_api_key', trimmed);
+                        setGeminiApiKey(trimmed);
+                        setIsApiKeyModalOpen(false);
+                        speakText("Gemini Vision AI key saved. Upload any diagram to analyze with AI.", true);
+                      }}
+                      style={{
+                        padding: '0.45rem 1rem',
+                        background: '#10b981',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#ffffff',
+                        fontSize: '0.75rem',
+                        fontWeight: 800,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Save Key
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Guided Tracing Controls & Live Instructions */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.6rem', background: '#121215', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                {!tracingStarted ? (
+                  <button
+                    onClick={() => {
+                      initAudioHaptics();
+                      startTracingPart(0);
+                    }}
+                    style={{
+                      padding: '0.4rem 0.95rem',
+                      background: '#ffffff',
+                      color: '#09090b',
+                      borderRadius: '8px',
+                      border: 'none',
+                      fontSize: '0.75rem',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      boxShadow: '0 2px 8px rgba(255,255,255,0.2)'
+                    }}
+                  >
+                    <Play style={{ width: 13, height: 13, fill: '#09090b' }} />
+                    <span>Start Guided Tracing</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      const currentKey = partOrder[currentPartIndex];
+                      const info = partsManifest[currentKey] || (diagram.landmarks && diagram.landmarks[currentPartIndex]);
+                      if (info) {
+                        speakText(`Trace the ${info.name}. Slide your finger along the outline to feel vibrations.`, true);
+                      }
+                    }}
+                    style={{
+                      padding: '0.4rem 0.85rem',
+                      background: '#27272a',
+                      color: '#ffffff',
+                      borderRadius: '8px',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem'
+                    }}
+                  >
+                    <RotateCcw style={{ width: 12, height: 12 }} />
+                    <span>Repeat Instruction</span>
+                  </button>
+                )}
+                <span style={{ fontSize: '0.75rem', color: '#d4d4d8', fontWeight: 600 }}>
+                  {statusMessage}
+                </span>
+              </div>
+
+              {tracingStarted && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ fontSize: '0.6875rem', color: '#a1a1aa', fontWeight: 700 }}>PART PROGRESS:</span>
+                  <div style={{ width: 60, height: 8, background: '#27272a', borderRadius: 999, overflow: 'hidden' }}>
+                    <div style={{ width: `${partCoverage}%`, height: '100%', background: '#34d399', transition: 'width 0.15s ease' }} />
+                  </div>
+                  <span style={{ fontSize: '0.6875rem', color: '#34d399', fontWeight: 800 }}>{partCoverage}%</span>
+                </div>
+              )}
+            </div>
+
+            {/* Part-by-Part Step Navigator Pills */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', background: '#121215', padding: '0.75rem', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Select Integral Part to Explore &amp; Hear Function:
+                </span>
+                <span style={{ fontSize: '0.6875rem', color: '#34d399', fontWeight: 700 }}>
+                  {diagram.landmarks?.length || 0} Distinct Regions Active
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                {diagram.landmarks?.map((lm, idx) => {
+                  const isActive = activeLandmark?.id === lm.id || (tracingStarted && currentPartIndex === idx);
+                  const isExplored = discoveredLandmarks.has(lm.id);
+                  return (
+                    <button
+                      key={lm.id || idx}
+                      onClick={() => {
+                        setActiveLandmark(lm);
+                        setCurrentPartIndex(idx);
+                        setTouchCoordinates({ x: lm.x, y: lm.y });
+                        setDiscoveredLandmarks(prev => new Set(prev).add(lm.id));
+                        playSpatialHapticFeedback(true, true, lm.y);
+                        speakText(`${lm.name}. ${lm.audioDescription}`, true);
+                      }}
+                      style={{
+                        padding: '0.3rem 0.65rem',
+                        borderRadius: '8px',
+                        background: isActive ? '#ffffff' : (isExplored ? '#27272a' : '#18181b'),
+                        color: isActive ? '#09090b' : (isExplored ? '#ffffff' : '#a1a1aa'),
+                        border: isActive ? '1px solid #ffffff' : '1px solid rgba(255, 255, 255, 0.12)',
+                        fontSize: '0.7rem',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <span>{idx + 1}. {lm.name.split('(')[0].trim()}</span>
+                      {isExplored && <span style={{ color: isActive ? '#09090b' : '#34d399' }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Tactile Surface Area with High-Contrast Canvas & Tracing Engine */}
             <div 
               style={{
                 position: 'relative',
@@ -1081,9 +1702,11 @@ export default function BlindModule({
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerLeave={handlePointerUp}
-                style={{ width: '100%', height: '100%', cursor: 'crosshair' }}
+                onPointerCancel={handlePointerUp}
+                style={{ width: '100%', height: '100%', cursor: 'crosshair', display: 'block', touchAction: 'none' }}
               />
 
+              {/* Status Indicator Pill */}
               <div style={{
                 position: 'absolute',
                 top: 14,
@@ -1092,17 +1715,19 @@ export default function BlindModule({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
-                padding: '0.4rem 0.85rem',
+                padding: '0.45rem 0.95rem',
                 borderRadius: '999px',
-                background: isOnPath ? '#ffffff' : 'rgba(24, 24, 27, 0.85)',
-                color: isOnPath ? '#09090b' : '#a1a1aa',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
+                background: isOnPath ? '#10b981' : 'rgba(24, 24, 27, 0.85)',
+                color: isOnPath ? '#ffffff' : '#a1a1aa',
+                border: '1px solid rgba(255, 255, 255, 0.25)',
                 fontSize: '0.75rem',
                 fontWeight: 800,
-                fontFamily: 'var(--font-mono)'
+                fontFamily: 'var(--font-mono)',
+                boxShadow: isOnPath ? '0 0 16px rgba(16, 185, 129, 0.5)' : 'none',
+                transition: 'all 0.15s ease'
               }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: isOnPath ? '#09090b' : '#71717a' }} />
-                <span>{activeLandmark ? `POI: ${activeLandmark.name}` : (isOnPath ? 'ON OUTLINE (VIBRATING)' : 'OFF OUTLINE (SILENT)')}</span>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: isOnPath ? '#ffffff' : '#71717a' }} />
+                <span>{activeLandmark ? `POI: ${activeLandmark.name.split('(')[0].trim()}` : (isOnPath ? '🟢 ON OUTLINE (VIBRATING)' : '⚪ OFF OUTLINE (SILENT / MISS)')}</span>
               </div>
 
               <div style={{ position: 'absolute', bottom: 14, left: 14, zIndex: 20, background: 'rgba(24, 24, 27, 0.85)', padding: '0.3rem 0.65rem', borderRadius: 8, fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: '#d4d4d8' }}>
@@ -1110,38 +1735,52 @@ export default function BlindModule({
               </div>
             </div>
 
-            {/* Active Landmark Explanation */}
+            {/* Active Landmark Explanation with Full Function */}
             {activeLandmark && (
-              <div style={{ padding: '1rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.2)', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <div style={{ padding: '1.15rem 1.25rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.25)', borderRadius: '16px', display: 'flex', flexDirection: 'column', gap: '0.4rem', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <CheckCircle2 className="w-4 h-4 text-white" />
                     {activeLandmark.name}
                   </span>
-                  <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#34d399', background: '#18181b', padding: '0.2rem 0.55rem', borderRadius: '6px' }}>
-                    Explaining Audio
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#34d399', background: '#18181b', padding: '0.2rem 0.55rem', borderRadius: '6px' }}>
+                      🔊 Audio Explaining Function
+                    </span>
+                    <button
+                      onClick={() => speakText(`${activeLandmark.name}. ${activeLandmark.audioDescription}`, true)}
+                      style={{ padding: '0.2rem 0.55rem', background: '#27272a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#ffffff', fontSize: '0.6875rem', fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      Replay Function
+                    </button>
+                  </div>
                 </div>
-                <p style={{ fontSize: '0.8125rem', color: '#d4d4d8', margin: 0, lineHeight: 1.5 }}>
+                <p style={{ fontSize: '0.875rem', color: '#f4f4f5', margin: 0, lineHeight: 1.6 }}>
                   {activeLandmark.audioDescription}
                 </p>
               </div>
             )}
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#a1a1aa' }}>
-              <span>👆 Drag your finger along lines to feel tactile vibrations.</span>
+              <span>👆 Drag your finger along lines or tap part buttons to feel vibrations &amp; hear functions.</span>
               <button onClick={() => speakText("Tactile diagram guide: Drag your finger across the surface. When you touch an outline or inline, your device pulses and plays a frequency tone. When you reach a landmark, you feel a double pulse and hear its full function.", true)} style={{ background: 'none', border: 'none', color: '#ffffff', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}>
                 Audio Diagram Guide
               </button>
             </div>
           </div>
 
-          {/* Right: Audio Points List */}
+          {/* Right: Progress List & Spoken Narration Box */}
           <div className="ref-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#ffffff' }}>
-              Diagram Anatomy Points
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#ffffff' }}>
+                Diagram Anatomy Points
+              </h3>
+              <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>
+                {diagram.landmarks?.length || 0} Slots Active
+              </span>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '520px', overflowY: 'auto' }}>
               {diagram.landmarks?.map((lm, idx) => {
                 const isFound = discoveredLandmarks.has(lm.id);
                 const isCurrent = activeLandmark?.id === lm.id;
@@ -1150,6 +1789,7 @@ export default function BlindModule({
                     key={idx}
                     onClick={() => {
                       setActiveLandmark(lm);
+                      setTouchCoordinates({ x: lm.x, y: lm.y });
                       setDiscoveredLandmarks(prev => new Set(prev).add(lm.id));
                       playSpatialHapticFeedback(true, true, lm.y);
                       speakText(`${lm.name}. ${lm.audioDescription}`, true);
@@ -1167,14 +1807,16 @@ export default function BlindModule({
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff' }}>{lm.name}</span>
+                      <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff' }}>
+                        {idx + 1}. {lm.name}
+                      </span>
                       {isFound ? (
                         <span style={{ fontSize: '0.6875rem', color: '#34d399', fontWeight: 700 }}>✓ Explored</span>
                       ) : (
                         <span style={{ fontSize: '0.6875rem', color: '#71717a' }}>Tap to Listen</span>
                       )}
                     </div>
-                    <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                    <p style={{ fontSize: '0.75rem', color: '#d4d4d8', margin: 0, lineHeight: 1.4 }}>
                       {lm.audioDescription}
                     </p>
                   </div>

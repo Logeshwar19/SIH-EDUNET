@@ -4,10 +4,11 @@
   "description": "InclusiveAI: AI-Powered Inclusive Education Platform (Upload Once -> Learn Without Barriers)",
   "type": "module",
   "scripts": {
-    "dev:client": "cd client && npm run dev",
-    "dev:server": "cd server && node index.js",
-    "build": "cd client && npm run build",
-    "start": "cd server && node index.js"
+    "dev": "npm --prefix client run dev",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start"
   },
   "keywords": ["sih", "inclusive-education", "accessibility", "isl", "haptics", "mediapipe", "speech-api"],
   "author": "SIH Team",

@@ -168,6 +168,22 @@ export default function DeafModule({
 
   useEffect(() => {
     if (!studentRoomCode) return;
+    
+    // Listen to custom event for same-tab instant video frame streaming
+    const handleCustomFrame = (e) => {
+      if (e.detail?.frameData) {
+        setTeacherLiveVideoFrame(e.detail.frameData);
+        setIsRoomBroadcastLive(true);
+      }
+    };
+    window.addEventListener('inclusiveai-live-frame', handleCustomFrame);
+
+    // Initial check from localStorage cache
+    try {
+      const cached = localStorage.getItem('inclusiveai_live_frame');
+      if (cached) setTeacherLiveVideoFrame(cached);
+    } catch (e) {}
+
     const unsub = subscribeRoomSession(studentRoomCode, {
       onVideoFrame: (frameData) => {
         setTeacherLiveVideoFrame(frameData);
@@ -196,7 +212,11 @@ export default function DeafModule({
         setTeacherReplyText(t);
       }
     });
-    return unsub;
+
+    return () => {
+      unsub();
+      window.removeEventListener('inclusiveai-live-frame', handleCustomFrame);
+    };
   }, [studentRoomCode]);
 
   // Subscribe to teacher reply via BroadcastChannel
@@ -641,34 +661,77 @@ export default function DeafModule({
         </div>
       </div>
 
-      {/* LIVE NOTIFICATION MODAL */}
+      {/* NON-INTRUSIVE LIVE CLASS NOTIFICATION BANNER */}
       {liveNotification && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
-          <div style={{ background: '#18181b', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '24px', padding: '2.5rem 2.25rem', maxWidth: '420px', width: '90%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem', boxShadow: '0 25px 60px rgba(0,0,0,0.6)' }}>
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg, #27272a, #3f3f46)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem' }}>👩‍🏫</div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}><span className="live-dot" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#ef4444', boxShadow: '0 0 8px #ef4444' }} />Live Class Started</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>{liveNotification.teacherName}</div>
-              <div style={{ fontSize: '0.85rem', color: '#a1a1aa', marginTop: 4 }}>{liveNotification.teacherSubject}</div>
-              <div style={{ fontSize: '0.8rem', color: '#e4e4e7', marginTop: '0.75rem', padding: '0.5rem 1rem', background: '#27272a', borderRadius: '10px' }}>{liveNotification.lessonTitle}</div>
+        <div style={{
+          background: 'linear-gradient(90deg, #18181b 0%, #27272a 100%)',
+          border: '1px solid rgba(239, 68, 68, 0.4)',
+          borderRadius: '18px',
+          padding: '0.85rem 1.25rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          boxShadow: '0 8px 24px rgba(239, 68, 68, 0.15)',
+          animation: 'fadeIn 0.3s ease'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', fontSize: '1.1rem', flexShrink: 0 }}>
+              👩‍🏫
             </div>
-            <div style={{ display: 'flex', gap: '0.75rem', width: '100%' }}>
-              <button onClick={() => { setStudentRoomCode(liveNotification.roomCode); setActiveTab('live_lecture'); setLiveNotification(null); }} style={{ flex: 1, padding: '0.75rem 1rem', background: '#ffffff', color: '#09090b', border: 'none', borderRadius: '14px', fontSize: '0.875rem', fontWeight: 800, cursor: 'pointer' }}>✅ Join Class</button>
-              <button onClick={() => setLiveNotification(null)} style={{ flex: 1, padding: '0.75rem 1rem', background: '#27272a', color: '#a1a1aa', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer' }}>Ignore</button>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span className="live-dot" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#ef4444', boxShadow: '0 0 6px #ef4444' }} />
+                <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#ffffff' }}>
+                  {liveNotification.teacherName} started Live Class!
+                </span>
+                <span style={{ fontSize: '0.6875rem', color: '#a1a1aa' }}>({liveNotification.teacherSubject})</span>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: '#d4d4d8', margin: '0.15rem 0 0 0' }}>
+                Lesson: <strong style={{ color: '#ffffff' }}>{liveNotification.lessonTitle}</strong> • Room: <span style={{ fontFamily: 'monospace' }}>{liveNotification.roomCode}</span>
+              </p>
             </div>
-            <button onClick={() => {
-              const tid = liveNotification?.teacherId;
-              if (!tid) return;
-              const already = isFollowed(tid);
-              if (already) {
-                unfollowTeacher(tid);
-                setFollowedTeachers(f => (Array.isArray(f) ? f.filter(x => x !== tid) : []));
-              } else {
-                followTeacher(tid);
-                setFollowedTeachers(f => [...(Array.isArray(f) ? f : []), tid]);
-              }
-            }} style={{ fontSize: '0.75rem', color: '#71717a', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-              {isFollowed(liveNotification?.teacherId) ? 'Unfollow this teacher' : 'Follow this teacher for future alerts'}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button
+              onClick={() => {
+                setStudentRoomCode(liveNotification.roomCode);
+                setActiveTab('live_lecture');
+                setLiveNotification(null);
+              }}
+              style={{
+                padding: '0.45rem 1rem',
+                background: '#ffffff',
+                color: '#09090b',
+                border: 'none',
+                borderRadius: '10px',
+                fontSize: '0.75rem',
+                fontWeight: 800,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                boxShadow: '0 2px 8px rgba(255, 255, 255, 0.2)'
+              }}
+            >
+              <Radio style={{ width: 13, height: 13, color: '#ef4444' }} /> Join Live Class
+            </button>
+            <button
+              onClick={() => setLiveNotification(null)}
+              style={{
+                padding: '0.45rem 0.85rem',
+                background: '#18181b',
+                color: '#a1a1aa',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '10px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Dismiss
             </button>
           </div>
         </div>
@@ -1103,7 +1166,7 @@ export default function DeafModule({
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
                 <label style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase' }}>
-                  Captured Sign Sequence:
+                  Captured Sign Sequence (One-by-One Doubt Builder):
                 </label>
                 {detectedSignSequence.length > 0 && (
                   <button
@@ -1126,17 +1189,48 @@ export default function DeafModule({
                   </button>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+              
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', minHeight: '38px', padding: '0.35rem 0.5rem', background: '#121215', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
                 {detectedSignSequence.length > 0 ? (
                   detectedSignSequence.map((token, idx) => (
-                    <span key={idx} style={{ padding: '0.3rem 0.75rem', background: '#121215', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, color: '#ffffff', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span key={idx} style={{ padding: '0.25rem 0.65rem', background: '#27272a', border: '1px solid rgba(255, 255, 255, 0.2)', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, color: '#ffffff', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
                       <span>{token}</span>
                       <span style={{ fontSize: '0.6875rem', color: '#34d399', fontWeight: 700 }}>[{translateISLToTamil(token)}]</span>
                     </span>
                   ))
                 ) : (
-                  <span style={{ color: '#71717a', fontSize: '0.75rem', fontStyle: 'italic' }}>Sign in front of camera to capture ISL tokens…</span>
+                  <span style={{ color: '#71717a', fontSize: '0.75rem', fontStyle: 'italic', alignSelf: 'center' }}>
+                    Sign on camera or tap sign buttons below to sequence your doubt…
+                  </span>
                 )}
+              </div>
+
+              {/* Quick Sign Token Appender */}
+              <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.5rem', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.6875rem', color: '#71717a', fontWeight: 700 }}>+ Add Sign:</span>
+                {['HEART', 'PUMP', 'OXYGEN', 'BLOOD', 'ARTERY', 'SCIENCE', 'QUESTION', 'REPEAT', 'HELP', 'DIAGRAM'].map(s => (
+                  <button
+                    key={s}
+                    onClick={() => {
+                      const nextSeq = [...detectedSignSequence, s];
+                      setDetectedSignSequence(nextSeq);
+                      const generated = generateNaturalDoubtFromSign(s, lesson);
+                      setAiFormattedDoubt(generated);
+                    }}
+                    style={{
+                      padding: '0.2rem 0.5rem',
+                      background: '#18181b',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      borderRadius: '6px',
+                      color: '#e4e4e7',
+                      fontSize: '0.6875rem',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    + {s}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -1144,7 +1238,7 @@ export default function DeafModule({
             <div style={{ background: '#121215', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '16px', padding: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                 <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  AI Formatted Doubt (English & தமிழ்):
+                  AI Sequenced Question to Teacher (English & தமிழ்):
                 </span>
                 <button
                   onClick={() => speakText(aiFormattedDoubt)}
