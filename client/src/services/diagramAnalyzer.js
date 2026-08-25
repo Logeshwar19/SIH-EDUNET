@@ -262,6 +262,15 @@ export function generateEdgeMaskFromPaths(paths = [], targetW = 800, targetH = 6
   return { outlineDataUrl, edgeMask };
 }
 
+// ─── Outline Hit Check ──────────────────────────────────────────────────────
+export function isCoordinateOnOutline(x, y, edgeMask, width = 800, height = 600) {
+  if (!edgeMask) return false;
+  const rx = Math.round(x);
+  const ry = Math.round(y);
+  if (rx < 0 || rx >= width || ry < 0 || ry >= height) return false;
+  return edgeMask[ry * width + rx] === 1;
+}
+
 /**
  * Generates an interactive tactile flowchart with edgeMask and outlineDataUrl for touch vibration.
  */

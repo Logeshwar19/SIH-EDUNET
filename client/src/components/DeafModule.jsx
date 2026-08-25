@@ -1082,32 +1082,6 @@ export default function DeafModule({
               <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
                 Class Room Code:
               </span>
-              <input
-                type="text"
-                value={studentRoomCode}
-                onChange={(e) => setStudentRoomCode(e.target.value.toUpperCase())}
-                placeholder="e.g. ROOM-SIH-2026"
-                style={{
-                  background: '#1f1f23',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  color: '#ffffff',
-                  fontFamily: 'var(--font-mono)',
-                  fontWeight: 800,
-                  fontSize: '0.8125rem',
-                  padding: '0.35rem 0.75rem',
-                  borderRadius: '8px',
-                  width: '160px',
-                  outline: 'none'
-                }}
-                title="Change room code to connect to teacher's laptop"
-              />
-            </div>
-          </div>
-              flexWrap: 'wrap'
-            }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
-                Class Room Code:
-              </span>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: '220px' }}>
                 <input

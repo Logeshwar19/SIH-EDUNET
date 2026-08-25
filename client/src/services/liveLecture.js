@@ -872,4 +872,10 @@ export function subscribeLecture(callback) {
 export function subscribeTeacherReply(callback) {
   return subscribeRoomSession(DEFAULT_ROOM_CODE, { onTeacherReply: (g, t) => callback(g, t) });
 }
+export function clearStaleLiveData() {
+  try {
+    sessionStorage.removeItem('inclusiveai_active_live_stream');
+  } catch (e) {}
+}
+
 
