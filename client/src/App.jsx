@@ -58,7 +58,7 @@ class ErrorBoundary extends Component {
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      const saved = localStorage.getItem('inclusiveai_current_user');
+      const saved = localStorage.getItem('inclusiveai_current_user') || localStorage.getItem('inclusiveai_user_auth');
       return saved ? JSON.parse(saved) : null;
     } catch {
       return null;
@@ -67,15 +67,15 @@ export default function App() {
   const [defaultRoleOnAuth, setDefaultRoleOnAuth] = useState('teacher');
   const [activeTab, setActiveTab] = useState(() => {
     try {
-      const saved = localStorage.getItem('inclusiveai_current_user');
+      const saved = localStorage.getItem('inclusiveai_current_user') || localStorage.getItem('inclusiveai_user_auth');
       if (saved) {
         const u = JSON.parse(saved);
         if (u.role === 'teacher') return 'teacher';
-        if (u.role === 'deaf_student') return 'deaf';
-        if (u.role === 'blind_student') return 'blind';
+        if (u.role === 'deaf' || u.role === 'deaf_student') return 'deaf';
+        if (u.role === 'blind' || u.role === 'blind_student') return 'blind';
       }
     } catch {}
-    return 'auth';
+    return 'teacher';
   });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [lessons, setLessons] = useState(initialLessons);
@@ -281,8 +281,10 @@ export default function App() {
     setCurrentUser(null);
     try {
       localStorage.removeItem('inclusiveai_current_user');
+      localStorage.removeItem('inclusiveai_user_auth');
     } catch (e) {}
-    setActiveTab('auth');
+    setActiveTab('teacher');
+    setIsAuthModalOpen(true);
   }, []);
 
   const currentLesson = lessons.find(l => l.id === currentLessonId) || lessons[0];
@@ -381,16 +383,9 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {/* Main Content Area — Strict Role Isolation */}
+      {/* Main Content Area */}
       <main style={{ paddingBottom: '5rem' }}>
-        {!currentUser && (
-          <AuthPortal
-            onLoginSuccess={handleLoginSuccess}
-            currentActiveRole={defaultRoleOnAuth}
-          />
-        )}
-
-        {currentUser?.role === 'teacher' && (
+        {activeTab === 'teacher' && (
           <TeacherDashboard
             currentUser={currentUser}
             lessons={lessons}
@@ -410,7 +405,7 @@ export default function App() {
           />
         )}
 
-        {currentUser?.role === 'deaf_student' && (
+        {activeTab === 'deaf' && (
           <DeafModule
             lesson={currentLesson}
             onSavePractice={handleSavePractice}
@@ -421,7 +416,7 @@ export default function App() {
           />
         )}
 
-        {currentUser?.role === 'blind_student' && (
+        {activeTab === 'blind' && (
           <BlindModule
             lesson={currentLesson}
             isAudioMuted={isAudioMuted}
@@ -460,8 +455,8 @@ export default function App() {
       {/* Gmail Authentication & Role Setup Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
-        onClose={() => currentUser && setIsAuthModalOpen(false)}
-        onAuthSuccess={handleAuthSuccess}
+        onClose={() => setIsAuthModalOpen(false)}
+        onAuthSuccess={handleLoginSuccess}
         currentProfile={currentUser}
       />
     </div>
