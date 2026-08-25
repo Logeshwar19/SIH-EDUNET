@@ -211,9 +211,31 @@ function getRoomChannel(roomCode = DEFAULT_ROOM_CODE) {
 
 // ── TEACHER SESSION ───────────────────────────────────────────────────────────
 
+// Max age (ms) for localStorage data to be considered valid
+const LIVE_DATA_MAX_AGE = 15000; // 15 seconds
+
+/**
+ * Clean up ALL stale live class localStorage keys.
+ * Call on app startup and when stopping a class.
+ */
+export function clearStaleLiveData() {
+  try {
+    localStorage.removeItem('inclusiveai_active_live_class');
+    localStorage.removeItem('inclusiveai_live_frame');
+    localStorage.removeItem('inclusiveai_live_transcript');
+    // Remove all room status keys
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('inclusiveai_room_status_')) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch (e) {}
+}
+
 /**
  * Starts a real Teacher Video & Audio live lecture session.
- * Broadcasts a live notification to all followers across tabs.
+ * Broadcasts via BroadcastChannel AND localStorage for reliable cross-tab delivery.
  */
 export async function startTeacherVideoSession({
   videoElement,
@@ -246,7 +268,7 @@ export async function startTeacherVideoSession({
       try { await videoElement.play(); } catch (e) {}
     }
 
-    // 3. Setup video frame broadcaster for student views using offscreen capture
+    // 3. Setup video frame broadcaster — BOTH BroadcastChannel AND localStorage
     if (!_hiddenCanvas) {
       _hiddenCanvas = document.createElement('canvas');
       _hiddenCanvas.width = 360;
@@ -265,24 +287,26 @@ export async function startTeacherVideoSession({
     }
 
     const roomChan = getRoomChannel(roomCode);
+    let frameCount = 0;
 
-    if (stream && stream.getVideoTracks().length > 0) {
+    if (stream.getVideoTracks().length > 0) {
       const ctx = _hiddenCanvas.getContext('2d');
       if (_frameBroadcastTimer) clearInterval(_frameBroadcastTimer);
       _frameBroadcastTimer = setInterval(() => {
         const sourceVid = (videoElement && videoElement.readyState >= 2) ? videoElement : _captureVideoElement;
         if (!sourceVid || sourceVid.paused || sourceVid.ended) return;
         try {
-          ctx.drawImage(sourceVid, 0, 0, 360, 270);
-          _lastCapturedFrame = _hiddenCanvas.toDataURL('image/jpeg', 0.6);
-          
-          // Post to BroadcastChannel
+          ctx.drawImage(sourceVid, 0, 0, 320, 240);
+          _lastCapturedFrame = _hiddenCanvas.toDataURL('image/jpeg', 0.55);
+          frameCount++;
+
+          // BroadcastChannel (for same-origin tabs)
           if (roomChan) {
             roomChan.postMessage({ type: 'VIDEO_FRAME', roomCode, frameData: _lastCapturedFrame, timestamp: Date.now() });
           }
-          // Same-tab & local storage fallback
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('inclusiveai-live-frame', { detail: { frameData: _lastCapturedFrame, roomCode } }));
+
+          // localStorage fallback (write every 3rd frame = ~3fps to avoid perf issues)
+          if (frameCount % 3 === 0) {
             try { localStorage.setItem('inclusiveai_live_frame', _lastCapturedFrame); } catch (e) {}
           }
         } catch (err) {}
@@ -315,17 +339,49 @@ export async function startTeacherVideoSession({
 
         if (onTranscriptUpdate) onTranscriptUpdate(glosses, currentText.trim(), isFinal, islSequence);
 
+        // BroadcastChannel
         if (roomChan) {
           roomChan.postMessage({
             type: 'LECTURE_TRANSCRIPT', roomCode, glosses,
             islSequence, rawText: currentText.trim(), isFinal, timestamp: Date.now()
           });
         }
+
+        // localStorage fallback for transcript
+        try {
+          localStorage.setItem('inclusiveai_live_transcript', JSON.stringify({
+            glosses, islSequence, rawText: currentText.trim(), isFinal, timestamp: Date.now()
+          }));
+        } catch (e) {}
       };
 
       _recognition.onerror = (e) => { if (e.error !== 'no-speech') console.warn('[LiveClass] Speech error:', e.error); };
       _recognition.onend = () => { if (_isLectureActive && _recognition) { try { _recognition.start(); } catch (e) {} } };
       try { _recognition.start(); } catch (e) {}
+    }
+
+    // 5. Setup Teacher listener for PING_ROOM requests from joining students
+    const handleTeacherRoomMessage = (event) => {
+      const data = event.data;
+      if (!data) return;
+      if (data.type === 'PING_ROOM') {
+        if (roomChan) {
+          roomChan.postMessage({
+            type: 'ROOM_STATUS', roomCode, isLive: true, lessonTitle,
+            teacherName: teacherProfile?.name || 'Teacher (Host)',
+            teacherId: teacherProfile?.id || 'TCH-0000',
+            teacherSubject: teacherProfile?.subject || '',
+            timestamp: Date.now()
+          });
+          if (_lastCapturedFrame) {
+            roomChan.postMessage({ type: 'VIDEO_FRAME', roomCode, frameData: _lastCapturedFrame, timestamp: Date.now() });
+          }
+        }
+      }
+    };
+
+    if (roomChan) {
+      roomChan.addEventListener('message', handleTeacherRoomMessage);
     }
 
     _isLectureActive = true;
@@ -338,10 +394,10 @@ export async function startTeacherVideoSession({
       timestamp: Date.now()
     };
 
-    // 5. Broadcast room active to room channel
+    // 6. Broadcast room active via BroadcastChannel
     if (roomChan) roomChan.postMessage(roomStatusPayload);
 
-    // 6. Broadcast LIVE_NOTIFICATION to all follower tabs + same tab listeners
+    // 7. Broadcast LIVE_NOTIFICATION to all follower tabs + same tab
     const notifPayload = {
       type: 'LIVE_CLASS_STARTED',
       teacherId: teacherProfile?.id || 'TCH-0000',
@@ -358,10 +414,23 @@ export async function startTeacherVideoSession({
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('inclusiveai-live-notification', { detail: notifPayload }));
-      try { localStorage.setItem('inclusiveai_active_live_class', JSON.stringify(notifPayload)); } catch (e) {}
+      try {
+        localStorage.setItem('inclusiveai_active_live_class', JSON.stringify(notifPayload));
+        localStorage.setItem('inclusiveai_room_status_' + roomCode, JSON.stringify(roomStatusPayload));
+      } catch (e) {}
     }
 
-    return { success: true, stream };
+    // 8. Keep-alive heartbeat — update localStorage timestamp every 3s so students know teacher is still live
+    const heartbeatInterval = setInterval(() => {
+      if (!_isLectureActive) { clearInterval(heartbeatInterval); return; }
+      try {
+        const hb = { ...roomStatusPayload, timestamp: Date.now() };
+        localStorage.setItem('inclusiveai_active_live_class', JSON.stringify({ ...notifPayload, timestamp: Date.now() }));
+        localStorage.setItem('inclusiveai_room_status_' + roomCode, JSON.stringify(hb));
+      } catch (e) {}
+    }, 3000);
+
+    return { success: true, stream, _heartbeatInterval: heartbeatInterval };
   } catch (err) {
     console.error('[LiveClass] startTeacherVideoSession failed:', err);
     if (onError) onError(err);
@@ -371,6 +440,7 @@ export async function startTeacherVideoSession({
 
 /**
  * Stops the active teacher live lecture and releases media streams.
+ * Cleans up ALL localStorage keys to prevent stale "connected" states.
  */
 export function stopTeacherVideoSession(roomCode = DEFAULT_ROOM_CODE) {
   _isLectureActive = false;
@@ -392,13 +462,13 @@ export function stopTeacherVideoSession(roomCode = DEFAULT_ROOM_CODE) {
     timestamp: Date.now()
   };
 
-  // Notify followers that class ended
   const notifChan = getNotifChannel();
   if (notifChan) notifChan.postMessage(endPayload);
 
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('inclusiveai-live-notification', { detail: endPayload }));
-    try { localStorage.removeItem('inclusiveai_active_live_class'); } catch (e) {}
+    // Clean up ALL live class localStorage keys
+    clearStaleLiveData();
   }
 
   _currentTeacherProfile = null;
@@ -422,6 +492,10 @@ export function toggleMicTrack(enable) {
   return false;
 }
 
+/**
+ * Student subscribes to a live room session.
+ * Listens via BroadcastChannel AND polls localStorage for reliable cross-tab delivery.
+ */
 export function subscribeRoomSession(roomCode = DEFAULT_ROOM_CODE, {
   onVideoFrame, onTranscript, onGlosses, onISLSequence, onStatus, onTeacherReply
 }) {
@@ -453,29 +527,106 @@ export function subscribeRoomSession(roomCode = DEFAULT_ROOM_CODE, {
     }
   };
 
-  const handleStorageFrame = (e) => {
+  // Listen for localStorage changes from teacher's tab
+  const handleStorage = (e) => {
     if (e.key === 'inclusiveai_live_frame' && e.newValue && onVideoFrame) {
       onVideoFrame(e.newValue);
     }
+    if (e.key === 'inclusiveai_live_transcript' && e.newValue) {
+      try {
+        const d = JSON.parse(e.newValue);
+        if (onTranscript) onTranscript(d.rawText, d.isFinal);
+        if (onGlosses) onGlosses(d.glosses || []);
+        if (onISLSequence) onISLSequence(d.islSequence || []);
+      } catch (err) {}
+    }
+    if (e.key === 'inclusiveai_active_live_class' || e.key === 'inclusiveai_room_status_' + roomCode) {
+      if (e.newValue && onStatus) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed && (parsed.roomCode === roomCode || !parsed.roomCode)) {
+            onStatus({ ...parsed, isLive: true });
+          }
+        } catch (err) {}
+      } else if (!e.newValue && onStatus) {
+        onStatus({ isLive: false });
+      }
+    }
   };
 
+  let pingInterval = null;
   if (roomChan) {
     roomChan.addEventListener('message', handleMessage);
     roomChan.postMessage({ type: 'PING_ROOM', roomCode, timestamp: Date.now() });
+    pingInterval = setInterval(() => {
+      try {
+        roomChan.postMessage({ type: 'PING_ROOM', roomCode, timestamp: Date.now() });
+      } catch (e) {}
+    }, 2000);
   }
 
+  // localStorage polling fallback — check every 1s if teacher's heartbeat is fresh
+  let pollInterval = null;
   if (typeof window !== 'undefined') {
-    window.addEventListener('storage', handleStorageFrame);
-    // Immediate frame check from cache
+    window.addEventListener('storage', handleStorage);
+
+    // Check on mount whether a FRESH live class exists (not stale data)
     try {
-      const cached = localStorage.getItem('inclusiveai_live_frame');
-      if (cached && onVideoFrame) onVideoFrame(cached);
+      const activeClass = localStorage.getItem('inclusiveai_active_live_class');
+      if (activeClass) {
+        const parsed = JSON.parse(activeClass);
+        const age = Date.now() - (parsed.timestamp || 0);
+        // Only consider valid if less than 15 seconds old
+        if (age < LIVE_DATA_MAX_AGE && parsed.roomCode === roomCode && onStatus) {
+          onStatus({ ...parsed, isLive: true });
+          const cachedFrame = localStorage.getItem('inclusiveai_live_frame');
+          if (cachedFrame && onVideoFrame) onVideoFrame(cachedFrame);
+        }
+      }
     } catch (e) {}
+
+    // Poll localStorage for live frame & status updates
+    let lastFrameTs = 0;
+    let lastTranscriptTs = 0;
+    pollInterval = setInterval(() => {
+      try {
+        // Check if teacher is still alive via heartbeat
+        const statusRaw = localStorage.getItem('inclusiveai_room_status_' + roomCode);
+        if (statusRaw) {
+          const status = JSON.parse(statusRaw);
+          const age = Date.now() - (status.timestamp || 0);
+          if (age < LIVE_DATA_MAX_AGE && status.isLive) {
+            if (onStatus) onStatus({ ...status, isLive: true });
+
+            // Read latest frame
+            const frame = localStorage.getItem('inclusiveai_live_frame');
+            if (frame && onVideoFrame) onVideoFrame(frame);
+
+            // Read latest transcript
+            const tRaw = localStorage.getItem('inclusiveai_live_transcript');
+            if (tRaw) {
+              const t = JSON.parse(tRaw);
+              if (t.timestamp > lastTranscriptTs) {
+                lastTranscriptTs = t.timestamp;
+                if (onTranscript) onTranscript(t.rawText, t.isFinal);
+                if (onGlosses) onGlosses(t.glosses || []);
+                if (onISLSequence) onISLSequence(t.islSequence || []);
+              }
+            }
+          } else if (age >= LIVE_DATA_MAX_AGE) {
+            // Heartbeat expired — teacher is no longer live
+            if (onStatus) onStatus({ isLive: false, roomCode });
+          }
+        }
+      } catch (e) {}
+    }, 1000);
   }
 
   return () => {
+    if (pingInterval) clearInterval(pingInterval);
+    if (pollInterval) clearInterval(pollInterval);
     if (roomChan) roomChan.removeEventListener('message', handleMessage);
-    if (typeof window !== 'undefined') window.removeEventListener('storage', handleStorageFrame);
+    if (typeof window !== 'undefined') window.removeEventListener('storage', handleStorage);
   };
 }
 

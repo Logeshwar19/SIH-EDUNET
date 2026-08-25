@@ -35,7 +35,7 @@ export default function Navbar({
   onStartLiveLecture,
   onStopLiveLecture,
   currentUser,
-  onOpenAuthModal,
+  onOpenAuth,
   onLogout,
 }) {
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
@@ -121,95 +121,127 @@ export default function Navbar({
           </div>
         </div>
 
-        {/* Center: Role Module Indicator Pill */}
-        <nav style={{
+        {/* Center Active Role Badge (Strict RBAC - Shows Only the Logged-in User's Portal) */}
+        <div style={{
           display: 'flex',
           alignItems: 'center',
-          gap: '0.35rem',
+          gap: '0.5rem',
           background: '#121215',
-          padding: '0.25rem 0.5rem',
+          padding: '0.35rem 0.85rem',
           borderRadius: '9999px',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
         }}>
-          {activeRoleTabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <div
-                key={tab.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.45rem',
-                  padding: '0.45rem 1rem',
-                  borderRadius: '9999px',
-                  fontSize: '0.8125rem',
-                  fontWeight: 800,
-                  fontFamily: 'var(--font-display)',
-                  background: '#ffffff',
-                  color: '#09090b',
-                  boxShadow: '0 4px 16px rgba(255, 255, 255, 0.25)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <Icon style={{ width: 16, height: 16 }} />
-                <span>{tab.label}</span>
-                {tab.id === 'deaf' && isLiveLecture && (
-                  <span className="live-dot" style={{ width: 6, height: 6, background: '#ef4444', boxShadow: '0 0 6px #ef4444' }} />
-                )}
-              </div>
-            );
-          })}
+          {currentUser?.role === 'teacher' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <GraduationCap style={{ width: 16, height: 16, color: '#3b82f6' }} />
+              <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
+                Teacher Studio
+              </span>
+              <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '0.15rem 0.45rem', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', borderRadius: '999px' }}>
+                Educator Access
+              </span>
+            </div>
+          )}
 
-          <button
-            onClick={() => onOpenAuthModal && onOpenAuthModal()}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#a1a1aa',
-              fontSize: '0.6875rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              padding: '0.3rem 0.6rem',
-              borderRadius: '999px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.3rem',
-              transition: 'all 0.15s'
-            }}
-            title="Switch Role / Account"
-          >
-            <RefreshCw style={{ width: 11, height: 11 }} />
-            <span>Switch Role</span>
-          </button>
-        </nav>
+          {currentUser?.role === 'deaf_student' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <Hand style={{ width: 16, height: 16, color: '#a855f7' }} />
+              <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
+                Deaf / ISL Module
+              </span>
+              <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '0.15rem 0.45rem', background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', borderRadius: '999px' }}>
+                Visual Sign AI
+              </span>
+              {isLiveLecture && (
+                <span className="live-dot" style={{ width: 6, height: 6, background: '#ef4444', boxShadow: '0 0 6px #ef4444' }} />
+              )}
+            </div>
+          )}
 
-        {/* Right Actions: Audio Controls, Live Status, Profile */}
+          {currentUser?.role === 'blind_student' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <Eye style={{ width: 16, height: 16, color: '#10b981' }} />
+              <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
+                Blind / BVI Module
+              </span>
+              <span style={{ fontSize: '0.625rem', fontWeight: 700, padding: '0.15rem 0.45rem', background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', borderRadius: '999px' }}>
+                Audio & Tactile
+              </span>
+            </div>
+          )}
+
+          {!currentUser && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <Sparkles style={{ width: 14, height: 14, color: '#f59e0b' }} />
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a1a1aa' }}>
+                Please Sign In
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Right Actions: Lesson Select, Controls, Live Status, Profile */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-          
-          {/* Audio TTS Toggle */}
-          <button
-            onClick={() => setIsAudioMuted(!isAudioMuted)}
-            title="Toggle Voice Reader"
-            style={{
-              padding: '0.4rem 0.75rem',
-              borderRadius: '9999px',
-              border: '1px solid ' + (isAudioMuted ? '#3f3f46' : 'rgba(255, 255, 255, 0.3)'),
-              background: isAudioMuted ? '#18181b' : '#27272a',
-              color: isAudioMuted ? '#71717a' : '#ffffff',
-              fontSize: '0.6875rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-            }}
-          >
-            {isAudioMuted ? <VolumeX style={{ width: 13, height: 13 }} /> : <Volume2 style={{ width: 13, height: 13 }} />}
-            <span>{isAudioMuted ? 'Muted' : 'TTS Voice'}</span>
-          </button>
+          {/* Lesson Selector */}
+          <div style={{ position: 'relative' }}>
+            <select
+              value={currentLessonId}
+              onChange={(e) => setCurrentLessonId(e.target.value)}
+              style={{
+                background: '#18181b',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                color: '#ffffff',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                borderRadius: '9999px',
+                padding: '0.4rem 1.8rem 0.4rem 0.85rem',
+                appearance: 'none',
+                cursor: 'pointer',
+                outline: 'none',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+              }}
+            >
+              {lessons.length === 0 ? (
+                <option value="" style={{ background: '#18181b', color: '#a1a1aa' }}>
+                  No Lessons Uploaded
+                </option>
+              ) : (
+                lessons.map((lesson) => (
+                  <option key={lesson.id} value={lesson.id} style={{ background: '#18181b', color: '#ffffff' }}>
+                    {lesson.title?.slice(0, 24)}… ({lesson.grade})
+                  </option>
+                ))
+              )}
+            </select>
+            <ChevronDown style={{ width: 13, height: 13, color: '#a1a1aa', position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+          </div>
 
-          {/* Teacher-Only Live Broadcast Button */}
-          {role === 'teacher' && (
+          {/* Audio TTS Toggle (Blind Student Only) */}
+          {currentUser?.role === 'blind_student' && (
+            <button
+              onClick={() => setIsAudioMuted(!isAudioMuted)}
+              title="Toggle Voice Reader"
+              style={{
+                padding: '0.4rem 0.75rem',
+                borderRadius: '9999px',
+                border: '1px solid ' + (isAudioMuted ? 'rgba(255, 255, 255, 0.15)' : '#10b981'),
+                background: isAudioMuted ? '#18181b' : 'rgba(16, 185, 129, 0.15)',
+                color: isAudioMuted ? '#a1a1aa' : '#34d399',
+                fontSize: '0.6875rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+              }}
+            >
+              {isAudioMuted ? <VolumeX style={{ width: 13, height: 13 }} /> : <Volume2 style={{ width: 13, height: 13 }} />}
+              <span>{isAudioMuted ? 'Muted' : 'TTS ON'}</span>
+            </button>
+          )}
+
+          {/* Teacher Broadcast Go Live Button (Teacher Only) */}
+          {currentUser?.role === 'teacher' && (
             !isLiveLecture ? (
               <button
                 onClick={onStartLiveLecture}
@@ -228,7 +260,7 @@ export default function Navbar({
                   boxShadow: '0 4px 14px rgba(255, 255, 255, 0.2)',
                 }}
               >
-                <Radio style={{ width: 13, height: 13, color: '#ef4444' }} />
+                <Radio style={{ width: 13, height: 13 }} />
                 <span>Go Live</span>
               </button>
             ) : (
@@ -249,138 +281,52 @@ export default function Navbar({
                 }}
               >
                 <span className="live-dot" />
-                <span>LIVE</span>
+                <span>END LECTURE</span>
                 <Square style={{ width: 10, height: 10 }} />
               </button>
             )
           )}
 
-          {/* User Profile Avatar Bubble with Dropdown Trigger */}
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setShowProfileDropdown(v => !v)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.45rem',
-                padding: '0.25rem 0.65rem 0.25rem 0.35rem',
-                borderRadius: '9999px',
-                background: '#18181b',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                cursor: 'pointer',
-                color: '#ffffff'
-              }}
-            >
-              <div style={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                background: '#27272a',
-                color: '#ffffff',
-                border: '1px solid rgba(255, 255, 255, 0.25)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '0.875rem',
-                fontWeight: 800,
-              }}>
-                {currentUser?.avatar || (currentUser?.name ? currentUser.name[0] : 'U')}
-              </div>
-              <div style={{ textAlign: 'left', lineHeight: 1.15 }}>
-                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#f4f4f5' }}>
-                  {currentUser?.name || 'My Profile'}
-                </div>
-                <div style={{ fontSize: '0.625rem', color: '#a1a1aa', textTransform: 'capitalize' }}>
-                  {role === 'teacher' ? '👩‍🏫 Teacher' : (role === 'deaf' ? '🤟 Deaf' : '🎧 Blind')}
-                </div>
-              </div>
-              <ChevronDown style={{ width: 12, height: 12, color: '#a1a1aa' }} />
-            </button>
-
-            {/* Profile Menu Dropdown */}
-            {showProfileDropdown && (
-              <div style={{
-                position: 'absolute',
-                top: '115%',
-                right: 0,
-                width: '240px',
-                background: '#18181b',
-                border: '1px solid rgba(255, 255, 255, 0.16)',
-                borderRadius: '18px',
-                padding: '1rem',
-                boxShadow: '0 20px 50px rgba(0, 0, 0, 0.7)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.75rem',
-                zIndex: 100,
-                animation: 'fadeIn 0.15s ease'
-              }}>
-                <div>
-                  <div style={{ fontSize: '0.875rem', fontWeight: 800, color: '#ffffff' }}>{currentUser?.name || 'User Profile'}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#a1a1aa', wordBreak: 'break-all' }}>{currentUser?.email || 'user@gmail.com'}</div>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.35rem', padding: '0.15rem 0.5rem', background: '#27272a', borderRadius: '999px', fontSize: '0.6875rem', fontWeight: 700, color: '#34d399' }}>
-                    <ShieldCheck style={{ width: 11, height: 11 }} /> {role.toUpperCase()} ROLE
-                  </div>
-                </div>
-
-                <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  {role === 'teacher' ? (
-                    <div style={{ fontSize: '0.75rem', color: '#d4d4d8' }}>
-                      Teacher ID: <strong style={{ fontFamily: 'monospace', color: '#ffffff' }}>{currentUser?.teacherId || 'TCH-BIO101'}</strong>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '0.75rem', color: '#d4d4d8' }}>
-                      Connected Teacher: <strong style={{ fontFamily: 'monospace', color: '#ffffff' }}>{currentUser?.connectedTeacherId || currentUser?.teacherId || 'TCH-BIO101'}</strong>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={() => {
-                      setShowProfileDropdown(false);
-                      if (onOpenAuthModal) onOpenAuthModal();
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.4rem',
-                      padding: '0.45rem 0.65rem',
-                      borderRadius: '10px',
-                      background: '#27272a',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: '#ffffff',
-                      fontSize: '0.75rem',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      marginTop: '0.25rem'
-                    }}
-                  >
-                    <RefreshCw style={{ width: 12, height: 12 }} /> Switch Role / Edit Profile
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setShowProfileDropdown(false);
-                      if (onLogout) onLogout();
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.4rem',
-                      padding: '0.45rem 0.65rem',
-                      borderRadius: '10px',
-                      background: 'rgba(239, 68, 68, 0.12)',
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
-                      color: '#f87171',
-                      fontSize: '0.75rem',
-                      fontWeight: 700,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <LogOut style={{ width: 12, height: 12 }} /> Log Out / Change Account
-                  </button>
-                </div>
-              </div>
-            )}
+          {/* User Profile Avatar Bubble & Login Switcher */}
+          <div
+            onClick={onOpenAuth}
+            title="Click to Switch Portal or Change User"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.45rem',
+              padding: '0.25rem 0.65rem 0.25rem 0.35rem',
+              borderRadius: '9999px',
+              background: '#18181b',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <div style={{
+              width: 26,
+              height: 26,
+              borderRadius: '50%',
+              background: currentUser?.role === 'teacher' ? '#3b82f6' : currentUser?.role === 'deaf_student' ? '#a855f7' : currentUser?.role === 'blind_student' ? '#10b981' : '#27272a',
+              color: '#ffffff',
+              border: '1px solid rgba(255, 255, 255, 0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '0.75rem',
+              fontWeight: 800,
+            }}>
+              {currentUser?.avatar || (currentUser?.name ? currentUser.name[0] : '👤')}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+              <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#f4f4f5' }}>
+                {currentUser?.name ? currentUser.name.split(' ')[0] : 'Sign In'}
+              </span>
+              <span style={{ fontSize: '0.55rem', fontWeight: 700, color: '#a1a1aa', textTransform: 'capitalize' }}>
+                {currentUser?.role ? currentUser.role.replace('_', ' ') : 'Select Role'}
+              </span>
+            </div>
           </div>
         </div>
       </div>

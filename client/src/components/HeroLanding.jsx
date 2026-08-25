@@ -107,8 +107,8 @@ export default function HeroLanding({ setActiveTab }) {
 
             {/* Action Buttons */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <button onClick={() => setActiveTab('teacher')} style={{ background: 'none', border: 'none', color: '#ffffff', fontWeight: 700, cursor: 'pointer', fontSize: '0.925rem' }}>Log in</button>
-              <button onClick={() => setActiveTab('teacher')} className="btn-gold">
+              <button onClick={() => setActiveTab('auth')} style={{ background: 'none', border: 'none', color: '#ffffff', fontWeight: 700, cursor: 'pointer', fontSize: '0.925rem' }}>Log in</button>
+              <button onClick={() => setActiveTab('auth')} className="btn-gold">
                 Sign up <ArrowRight style={{ width: 16, height: 16 }} />
               </button>
             </div>

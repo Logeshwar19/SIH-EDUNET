@@ -58,6 +58,7 @@ const STAGE_LABELS = [
 ];
 
 export default function TeacherDashboard({
+  currentUser,
   lessons,
   currentLessonId,
   setCurrentLessonId,
@@ -73,32 +74,54 @@ export default function TeacherDashboard({
   liveLectureTranscript,
   onTeacherReply,
 }) {
-  // ── Teacher Profile State ─────────────────────────────────────────────────
+  // ── Teacher Profile State (Synced with Logged-in User) ───────────────────────
   const [teacherName, setTeacherName] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_name') || '"Prof. Ananya Sharma"'); } catch { return 'Prof. Ananya Sharma'; }
+    if (currentUser?.name) return currentUser.name;
+    try {
+      const saved = localStorage.getItem('inclusiveai_teacher_name');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return 'Teacher (Host)';
   });
   const [teacherSubject, setTeacherSubjectState] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_subject') || '"Biology & Science"'); } catch { return 'Biology & Science'; }
+    if (currentUser?.subject || currentUser?.school) return currentUser.subject || currentUser.school;
+    try {
+      const saved = localStorage.getItem('inclusiveai_teacher_subject');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return 'Biology & Science';
   });
   const [teacherEmail, setTeacherEmail] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_email') || '"teacher@school.edu.in"'); } catch { return 'teacher@school.edu.in'; }
-  });
-  const [customTeacherId, setCustomTeacherId] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('inclusiveai_teacher_id') || '"TCH-BIO101"'); } catch { return 'TCH-BIO101'; }
+    if (currentUser?.email) return currentUser.email;
+    try {
+      const saved = localStorage.getItem('inclusiveai_teacher_email');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return 'teacher@inclusiveai.edu';
   });
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
-  const [copiedTeacherId, setCopiedTeacherId] = useState(false);
 
-  // Active Teacher ID
-  const teacherId = customTeacherId || generateTeacherID(teacherName);
+  // Sync state whenever logged-in user changes
+  useEffect(() => {
+    if (currentUser) {
+      if (currentUser.name) setTeacherName(currentUser.name);
+      if (currentUser.email) setTeacherEmail(currentUser.email);
+      if (currentUser.subject || currentUser.school) {
+        setTeacherSubjectState(currentUser.subject || currentUser.school);
+      }
+    }
+  }, [currentUser]);
+
+  // Compute Teacher ID from name (deterministic)
+  const teacherId = generateTeacherID(teacherName || currentUser?.name || 'Teacher');
 
   const getTeacherProfileObj = () => ({
     id: teacherId,
-    name: teacherName,
-    subject: teacherSubject,
-    email: teacherEmail,
-    avatar: '👩‍🏫'
+    name: teacherName || currentUser?.name || 'Teacher (Host)',
+    subject: teacherSubject || currentUser?.subject || 'Science & Education',
+    email: teacherEmail || currentUser?.email || '',
+    avatar: currentUser?.avatar || null
   });
 
   const handleSaveProfile = () => {
@@ -432,7 +455,9 @@ export default function TeacherDashboard({
             {/* ── Teacher Profile ID Card ── */}
             <div style={{ marginTop: '1.25rem', padding: '1rem 1.25rem', background: '#18181b', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
               {/* Avatar */}
-              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(135deg, #3f3f46, #52525b)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.35rem', flexShrink: 0 }}>👩‍🏫</div>
+              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(135deg, #3f3f46, #52525b)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.35rem', flexShrink: 0 }}>
+                {currentUser?.avatar || (currentUser?.name ? currentUser.name[0]?.toUpperCase() : '👩‍🏫')}
+              </div>
               {/* Info */}
               <div style={{ flex: 1, minWidth: 160 }}>
                 <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>{teacherName}</div>
